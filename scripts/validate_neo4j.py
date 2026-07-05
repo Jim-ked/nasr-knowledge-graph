@@ -31,12 +31,16 @@ def validate_graph(driver):
         print(f"{name}: {count}")
 
     for origin, dest in (("ATL", "LAX"), ("ABE", "BDL"), ("ORD", "DFW")):
-        paths = find_paths(driver, origin, dest, max_depth=40, limit=1)
+        paths, truncated = find_paths(
+            driver, origin, dest, max_depth=40, limit=1
+        )
         if paths:
             print(
                 f"{origin} -> {dest}: "
-                f"找到路径，hops={len(paths[0].relationships)}"
+                f"找到路径，hops={len(paths[0]['relationships'])}"
             )
+        elif truncated:
+            print(f"{origin} -> {dest}: 搜索队列超限")
         else:
             print(f"{origin} -> {dest}: 未找到路径")
     return results
