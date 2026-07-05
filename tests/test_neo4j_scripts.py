@@ -8,7 +8,11 @@ from scripts.import_to_neo4j import (
     clean_value,
     node_query,
 )
-from scripts.query_route import route_query
+from scripts.query_route import (
+    NEIGHBOR_QUERY_ORIGINAL_FIRST,
+    bfs_search,
+    route_query,
+)
 
 
 class ImportHelpersTests(unittest.TestCase):
@@ -53,6 +57,74 @@ class ImportHelpersTests(unittest.TestCase):
 
 
 class RouteQueryTests(unittest.TestCase):
+    def test_bfs_enforces_direction_cycles_airports_depth_and_limit(self):
+        start = {"nodeKey": "AIRPORT:A", "labels": ["Airport"]}
+        graph = {
+            "AIRPORT:A": [
+                ({"nodeKey": "FIX:X", "labels": ["Fix"]}, {"edgeKey": "A-X"}),
+            ],
+            "FIX:X": [
+                (start, {"edgeKey": "X-A"}),
+                (
+                    {"nodeKey": "AIRPORT:C", "labels": ["Airport"]},
+                    {"edgeKey": "X-C"},
+                ),
+                (
+                    {"nodeKey": "AIRPORT:B", "labels": ["Airport"]},
+                    {"edgeKey": "X-B"},
+                ),
+                ({"nodeKey": "FIX:Y", "labels": ["Fix"]}, {"edgeKey": "X-Y"}),
+            ],
+            "FIX:Y": [
+                (
+                    {"nodeKey": "AIRPORT:B", "labels": ["Airport"]},
+                    {"edgeKey": "Y-B"},
+                ),
+            ],
+        }
+
+        paths, truncated = bfs_search(
+            start,
+            "AIRPORT:B",
+            lambda key: graph.get(key, []),
+            max_depth=3,
+            limit=2,
+            max_queue=20,
+        )
+
+        self.assertFalse(truncated)
+        self.assertEqual(
+            [[node["nodeKey"] for node in path["nodes"]] for path in paths],
+            [
+                ["AIRPORT:A", "FIX:X", "AIRPORT:B"],
+                ["AIRPORT:A", "FIX:X", "FIX:Y", "AIRPORT:B"],
+            ],
+        )
+
+    def test_bfs_stops_when_queue_limit_is_reached(self):
+        start = {"nodeKey": "AIRPORT:A", "labels": ["Airport"]}
+        neighbors = [
+            ({"nodeKey": f"FIX:{number}", "labels": ["Fix"]}, {})
+            for number in range(3)
+        ]
+
+        paths, truncated = bfs_search(
+            start,
+            "AIRPORT:B",
+            lambda key: neighbors if key == "AIRPORT:A" else [],
+            max_depth=3,
+            limit=10,
+            max_queue=2,
+        )
+
+        self.assertEqual(paths, [])
+        self.assertTrue(truncated)
+
+    def test_neighbor_query_is_directed_ranked_and_limited(self):
+        self.assertIn("-[r:ROUTE_EDGE]->(m)", NEIGHBOR_QUERY_ORIGINAL_FIRST)
+        self.assertIn("WHEN 'original' THEN 0", NEIGHBOR_QUERY_ORIGINAL_FIRST)
+        self.assertIn("LIMIT $neighborLimit", NEIGHBOR_QUERY_ORIGINAL_FIRST)
+
     def test_query_uses_only_directed_edges_and_all_limits(self):
         query = route_query(40, 10)
 

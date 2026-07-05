@@ -43,6 +43,7 @@ python .\scripts\query_route.py --origin ATL --dest LAX --max-depth 40 --limit 1
 用于 Browser 标题；可通过 `:style` 导入
 [`browser_style.grass`](browser_style.grass)。
 
-查询只沿 `ROUTE_EDGE ->` 前进，因为
-`clean_edges_bidirectional.csv` 已经显式包含反向边。路径查询同时限制最大深度、
-禁止节点重复、禁止中间机场，并通过 `SHORTEST k` 限制返回数量。
+默认查询由 Python BFS 完成，Neo4j 只返回 `ROUTE_EDGE ->` 邻接边，因为
+`clean_edges_bidirectional.csv` 已经显式包含反向边。BFS 限制最大深度、
+禁止节点重复、禁止中间机场，并限制结果数、邻居数和搜索队列大小。
+旧的 Neo4j 最短路径查询保留为 `--mode cypher`。
