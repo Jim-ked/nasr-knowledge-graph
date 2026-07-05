@@ -29,9 +29,8 @@ python .\scripts\build_clean_graph_data.py `
 ```powershell
 pip install -r .\requirements.txt
 
-$env:NEO4J_URI = 'bolt://localhost:7687'
-$env:NEO4J_USER = 'neo4j'
-$env:NEO4J_PASSWORD = '真实密码'
+Copy-Item .\.env.example .\.env
+# 然后只需在 .env 中填写一次真实的 NEO4J_PASSWORD
 
 python .\scripts\import_to_neo4j.py --clean-dir .\data\clean --reset
 python .\scripts\validate_neo4j.py

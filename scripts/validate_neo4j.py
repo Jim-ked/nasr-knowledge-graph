@@ -1,8 +1,13 @@
 import os
+from pathlib import Path
 
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
 
 from query_route import find_paths
+
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 COUNT_QUERIES = {

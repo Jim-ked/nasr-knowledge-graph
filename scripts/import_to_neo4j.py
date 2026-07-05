@@ -5,6 +5,10 @@ from zipfile import ZipFile
 
 import pandas as pd
 from neo4j import GraphDatabase
+from dotenv import load_dotenv
+
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 NODE_FILES = (
