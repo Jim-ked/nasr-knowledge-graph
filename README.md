@@ -40,4 +40,4 @@ python .\scripts\query_route.py --origin ATL --dest LAX --max-depth 40 --limit 1
 
 查询只沿 `ROUTE_EDGE ->` 前进，因为
 `clean_edges_bidirectional.csv` 已经显式包含反向边。路径查询同时限制最大深度、
-禁止节点重复、禁止中间机场，并限制返回数量。
+禁止节点重复、禁止中间机场，并通过 `SHORTEST k` 限制返回数量。
