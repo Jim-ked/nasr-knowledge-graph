@@ -20,6 +20,25 @@ EXPECTED_COUNTS = {
     "ROUTE_EDGE": 13204,
 }
 
+CONSTRAINT_QUERIES = (
+    "CREATE CONSTRAINT airport_node_key IF NOT EXISTS "
+    "FOR (n:Airport) REQUIRE n.nodeKey IS UNIQUE",
+    "CREATE CONSTRAINT fix_node_key IF NOT EXISTS "
+    "FOR (n:Fix) REQUIRE n.nodeKey IS UNIQUE",
+    "CREATE CONSTRAINT navaid_node_key IF NOT EXISTS "
+    "FOR (n:Navaid) REQUIRE n.nodeKey IS UNIQUE",
+    "CREATE INDEX airport_id IF NOT EXISTS "
+    "FOR (n:Airport) ON (n.ARPT_ID)",
+)
+
+EDGE_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (a {nodeKey: row.fromNodeKey}) "
+    "MATCH (b {nodeKey: row.toNodeKey}) "
+    "MERGE (a)-[r:ROUTE_EDGE {edgeKey: row.edgeKey}]->(b) "
+    "SET r += row.props"
+)
+
 
 def clean_value(value):
     if pd.isna(value):
@@ -48,6 +67,31 @@ def read_records(path, integer_fields=()):
 def batches(rows, size):
     for start in range(0, len(rows), size):
         yield start, rows[start:start + size]
+
+
+def add_display_name(label, row):
+    row = dict(row)
+    if label == "Airport":
+        row["displayName"] = " ".join(
+            value for value in (row.get("ARPT_ID"), row.get("ARPT_NAME"))
+            if value
+        )
+    elif label == "Fix":
+        row["displayName"] = row.get("FIX_ID")
+    else:
+        row["displayName"] = " ".join(
+            value for value in (row.get("NAV_ID"), row.get("NAME"))
+            if value
+        )
+    return row
+
+
+def node_query(label):
+    return (
+        f"UNWIND $rows AS row "
+        f"MERGE (n:{label} {{nodeKey: row.nodeKey}}) "
+        f"SET n += row.props"
+    )
 
 
 def ensure_clean_dir(clean_dir):
@@ -100,29 +144,22 @@ def import_graph(driver, clean_dir, reset=False, batch_size=1000):
         if reset:
             session.run("MATCH (n) DETACH DELETE n").consume()
 
-        session.run(
-            "CREATE CONSTRAINT route_node_key IF NOT EXISTS "
-            "FOR (n:RouteNode) REQUIRE n.nodeKey IS UNIQUE"
-        ).consume()
-        session.run(
-            "CREATE INDEX airport_id IF NOT EXISTS "
-            "FOR (n:Airport) ON (n.ARPT_ID)"
-        ).consume()
+        session.run("DROP CONSTRAINT route_node_key IF EXISTS").consume()
+        for query in CONSTRAINT_QUERIES:
+            session.run(query).consume()
 
         for filename, label in NODE_FILES:
-            records = read_records(clean_dir / filename)
+            records = [
+                add_display_name(label, row)
+                for row in read_records(clean_dir / filename)
+            ]
             rows = [
                 {"nodeKey": row["nodeKey"], "props": row}
                 for row in records
                 if row.get("nodeKey")
             ]
-            query = (
-                f"UNWIND $rows AS row "
-                f"MERGE (n:{label}:RouteNode {{nodeKey: row.nodeKey}}) "
-                f"SET n += row.props"
-            )
             counts[label] = run_batches(
-                session, query, rows, batch_size, label
+                session, node_query(label), rows, batch_size, label
             )
 
         records = read_records(
@@ -145,15 +182,8 @@ def import_graph(driver, clean_dir, reset=False, batch_size=1000):
             and row.get("fromNodeKey")
             and row.get("toNodeKey")
         ]
-        edge_query = (
-            "UNWIND $rows AS row "
-            "MATCH (a:RouteNode {nodeKey: row.fromNodeKey}) "
-            "MATCH (b:RouteNode {nodeKey: row.toNodeKey}) "
-            "MERGE (a)-[r:ROUTE_EDGE {edgeKey: row.edgeKey}]->(b) "
-            "SET r += row.props"
-        )
         counts["ROUTE_EDGE"] = run_batches(
-            session, edge_query, rows, batch_size, "ROUTE_EDGE"
+            session, EDGE_QUERY, rows, batch_size, "ROUTE_EDGE"
         )
         counts["skipped_edges"] = skipped
 
@@ -166,9 +196,6 @@ def import_graph(driver, clean_dir, reset=False, batch_size=1000):
             ).single()["count"],
             "Navaid": session.run(
                 "MATCH (n:Navaid) RETURN count(n) AS count"
-            ).single()["count"],
-            "RouteNode": session.run(
-                "MATCH (n:RouteNode) RETURN count(n) AS count"
             ).single()["count"],
             "ROUTE_EDGE": session.run(
                 "MATCH ()-[r:ROUTE_EDGE]->() RETURN count(r) AS count"

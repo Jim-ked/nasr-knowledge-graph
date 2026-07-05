@@ -38,6 +38,11 @@ python .\scripts\validate_neo4j.py
 python .\scripts\query_route.py --origin ATL --dest LAX --max-depth 40 --limit 10
 ```
 
+数据库只创建 `Airport`、`Fix`、`Navaid` 三类节点标签以及
+`ROUTE_EDGE` 关系，不创建公共 `RouteNode` 标签。节点的 `displayName`
+用于 Browser 标题；可通过 `:style` 导入
+[`browser_style.grass`](browser_style.grass)。
+
 查询只沿 `ROUTE_EDGE ->` 前进，因为
 `clean_edges_bidirectional.csv` 已经显式包含反向边。路径查询同时限制最大深度、
 禁止节点重复、禁止中间机场，并通过 `SHORTEST k` 限制返回数量。

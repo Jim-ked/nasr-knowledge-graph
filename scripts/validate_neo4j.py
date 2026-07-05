@@ -9,7 +9,6 @@ COUNT_QUERIES = {
     "Airport": "MATCH (n:Airport) RETURN count(n) AS count",
     "Fix": "MATCH (n:Fix) RETURN count(n) AS count",
     "Navaid": "MATCH (n:Navaid) RETURN count(n) AS count",
-    "RouteNode": "MATCH (n:RouteNode) RETURN count(n) AS count",
     "ROUTE_EDGE": "MATCH ()-[r:ROUTE_EDGE]->() RETURN count(r) AS count",
 }
 
