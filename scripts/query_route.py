@@ -4,26 +4,27 @@ import os
 from neo4j import GraphDatabase
 
 
-def route_query(max_depth):
+def route_query(max_depth, limit):
     if not 1 <= max_depth <= 80:
         raise ValueError("max_depth 必须在 1 到 80 之间")
+    if not 1 <= limit <= 100:
+        raise ValueError("limit 必须在 1 到 100 之间")
     return f"""
-        MATCH p =
-        (start:Airport {{ARPT_ID: $origin}})
-        -[:ROUTE_EDGE*1..{max_depth}]->
-        (end:Airport {{ARPT_ID: $dest}})
-        WITH p, nodes(p) AS ns
-        WHERE all(n IN ns WHERE single(m IN ns WHERE m = n))
-          AND none(n IN ns[1..size(ns)-1] WHERE n:Airport)
+        MATCH SHORTEST {limit}
+        (p = (start:Airport {{ARPT_ID: $origin}})
+             -[:ROUTE_EDGE*1..{max_depth}]->
+             (end:Airport {{ARPT_ID: $dest}})
+         WHERE all(n IN nodes(p)
+                   WHERE single(m IN nodes(p) WHERE m = n))
+           AND none(n IN nodes(p)[1..size(nodes(p))-1]
+                    WHERE n:Airport))
         RETURN p
         LIMIT $limit
     """
 
 
 def find_paths(driver, origin, dest, max_depth=40, limit=10):
-    if not 1 <= limit <= 100:
-        raise ValueError("limit 必须在 1 到 100 之间")
-    query = route_query(max_depth)
+    query = route_query(max_depth, limit)
     with driver.session() as session:
         return [
             record["p"]

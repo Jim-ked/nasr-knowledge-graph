@@ -19,19 +19,26 @@ class ImportHelpersTests(unittest.TestCase):
 
 class RouteQueryTests(unittest.TestCase):
     def test_query_uses_only_directed_edges_and_all_limits(self):
-        query = route_query(40)
+        query = route_query(40, 10)
 
+        self.assertIn("MATCH SHORTEST 10", query)
         self.assertIn("-[:ROUTE_EDGE*1..40]->", query)
         self.assertNotIn("-[:ROUTE_EDGE*1..40]-\n", query)
-        self.assertIn("single(m IN ns WHERE m = n)", query)
-        self.assertIn("none(n IN ns[1..size(ns)-1] WHERE n:Airport)", query)
+        self.assertIn("single(m IN nodes(p) WHERE m = n)", query)
+        self.assertIn("none(n IN nodes(p)[1..size(nodes(p))-1]", query)
         self.assertIn("LIMIT $limit", query)
 
     def test_max_depth_is_validated_before_interpolation(self):
         for value in (0, 81):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
-                    route_query(value)
+                    route_query(value, 10)
+
+    def test_limit_is_validated_before_interpolation(self):
+        for value in (0, 101):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    route_query(40, value)
 
 
 if __name__ == "__main__":
