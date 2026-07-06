@@ -14,7 +14,13 @@ COUNT_QUERIES = {
     "Airport": "MATCH (n:Airport) RETURN count(n) AS count",
     "Fix": "MATCH (n:Fix) RETURN count(n) AS count",
     "Navaid": "MATCH (n:Navaid) RETURN count(n) AS count",
+    "PreferredRoute": "MATCH (n:PreferredRoute) RETURN count(n) AS count",
+    "RouteSegment": "MATCH (n:RouteSegment) RETURN count(n) AS count",
+    "Airway": "MATCH (n:Airway) RETURN count(n) AS count",
+    "Procedure": "MATCH (n:Procedure) RETURN count(n) AS count",
     "ROUTE_EDGE": "MATCH ()-[r:ROUTE_EDGE]->() RETURN count(r) AS count",
+    "HAS_SEGMENT": "MATCH ()-[r:HAS_SEGMENT]->() RETURN count(r) AS count",
+    "REFERENCES": "MATCH ()-[r:REFERENCES]->() RETURN count(r) AS count",
 }
 
 
@@ -31,9 +37,22 @@ def validate_graph(driver):
         results["self_loops"] = session.run(
             "MATCH (n)-[r:ROUTE_EDGE]->(n) RETURN count(r) AS count"
         ).single()["count"]
+        resolve_statuses = {
+            record["resolveStatus"]: record["count"]
+            for record in session.run(
+                "MATCH (s:RouteSegment) "
+                "RETURN s.resolveStatus AS resolveStatus, count(*) AS count "
+                "ORDER BY count DESC"
+            )
+        }
 
     for name, count in results.items():
         print(f"{name}: {count}")
+    print(f"RouteSegment resolveStatus: {resolve_statuses}")
+
+    for name in ("PreferredRoute", "RouteSegment", "HAS_SEGMENT", "REFERENCES"):
+        if results[name] <= 0:
+            raise RuntimeError(f"{name} 数量必须大于 0")
 
     for origin, dest in (("ATL", "LAX"), ("ABE", "BDL"), ("ORD", "DFW")):
         paths, truncated = find_paths(

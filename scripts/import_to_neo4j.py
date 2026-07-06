@@ -12,15 +12,38 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 NODE_FILES = (
-    ("clean_airports.csv", "Airport"),
-    ("clean_fixes.csv", "Fix"),
-    ("clean_navaids.csv", "Navaid"),
+    ("clean_airports.csv", "Airport", "nodeKey", ()),
+    ("clean_fixes.csv", "Fix", "nodeKey", ()),
+    ("clean_navaids.csv", "Navaid", "nodeKey", ()),
+    ("clean_preferred_routes.csv", "PreferredRoute", "routeKey", ()),
+    (
+        "clean_route_segments.csv",
+        "RouteSegment",
+        "segmentKey",
+        ("segmentSeq",),
+    ),
+    (
+        "clean_airways.csv",
+        "Airway",
+        "airwayKey",
+        ("sourceSegmentCount",),
+    ),
+    (
+        "clean_procedures.csv",
+        "Procedure",
+        "procedureKey",
+        ("sourceSegmentCount",),
+    ),
 )
 
 EXPECTED_COUNTS = {
     "Airport": 427,
     "Fix": 1580,
     "Navaid": 386,
+    "PreferredRoute": 10769,
+    "RouteSegment": 61424,
+    "Airway": 371,
+    "Procedure": 584,
     "ROUTE_EDGE": 13204,
 }
 
@@ -31,16 +54,80 @@ CONSTRAINT_QUERIES = (
     "FOR (n:Fix) REQUIRE n.nodeKey IS UNIQUE",
     "CREATE CONSTRAINT navaid_node_key IF NOT EXISTS "
     "FOR (n:Navaid) REQUIRE n.nodeKey IS UNIQUE",
+    "CREATE CONSTRAINT preferred_route_key IF NOT EXISTS "
+    "FOR (n:PreferredRoute) REQUIRE n.routeKey IS UNIQUE",
+    "CREATE CONSTRAINT route_segment_key IF NOT EXISTS "
+    "FOR (n:RouteSegment) REQUIRE n.segmentKey IS UNIQUE",
+    "CREATE CONSTRAINT airway_key IF NOT EXISTS "
+    "FOR (n:Airway) REQUIRE n.airwayKey IS UNIQUE",
+    "CREATE CONSTRAINT procedure_key IF NOT EXISTS "
+    "FOR (n:Procedure) REQUIRE n.procedureKey IS UNIQUE",
     "CREATE INDEX airport_id IF NOT EXISTS "
     "FOR (n:Airport) ON (n.ARPT_ID)",
 )
 
-EDGE_QUERY = (
+ROUTE_NODE_LABELS = {"Airport", "Fix", "Navaid"}
+
+
+def edge_query(from_label, to_label):
+    if from_label not in ROUTE_NODE_LABELS or to_label not in ROUTE_NODE_LABELS:
+        raise ValueError("ROUTE_EDGE 端点类型无效")
+    return (
+        "UNWIND $rows AS row "
+        f"MATCH (a:{from_label} {{nodeKey: row.fromNodeKey}}) "
+        f"MATCH (b:{to_label} {{nodeKey: row.toNodeKey}}) "
+        "MERGE (a)-[r:ROUTE_EDGE {edgeKey: row.edgeKey}]->(b) "
+        "SET r += row.props"
+    )
+
+ORIGIN_QUERY = (
     "UNWIND $rows AS row "
-    "MATCH (a {nodeKey: row.fromNodeKey}) "
-    "MATCH (b {nodeKey: row.toNodeKey}) "
-    "MERGE (a)-[r:ROUTE_EDGE {edgeKey: row.edgeKey}]->(b) "
-    "SET r += row.props"
+    "MATCH (a:Airport {ARPT_ID: row.airportId}) "
+    "MATCH (r:PreferredRoute {routeKey: row.routeKey}) "
+    "MERGE (a)-[:ORIGIN_OF]->(r)"
+)
+
+DESTINATION_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (r:PreferredRoute {routeKey: row.routeKey}) "
+    "MATCH (a:Airport {ARPT_ID: row.airportId}) "
+    "MERGE (r)-[:DESTINATION_AIRPORT]->(a)"
+)
+
+HAS_SEGMENT_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (r:PreferredRoute {routeKey: row.routeKey}) "
+    "MATCH (s:RouteSegment {segmentKey: row.segmentKey}) "
+    "MERGE (r)-[:HAS_SEGMENT {seq: row.seq}]->(s)"
+)
+
+NEXT_SEGMENT_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (a:RouteSegment {segmentKey: row.fromSegmentKey}) "
+    "MATCH (b:RouteSegment {segmentKey: row.toSegmentKey}) "
+    "MERGE (a)-[:NEXT_SEGMENT]->(b)"
+)
+
+REFERENCES_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (s:RouteSegment {segmentKey: row.segmentKey}) "
+    "MATCH (n {nodeKey: row.resolvedNodeKey}) "
+    "WHERE n:Fix OR n:Navaid "
+    "MERGE (s)-[:REFERENCES]->(n)"
+)
+
+USES_AIRWAY_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (s:RouteSegment {segmentKey: row.segmentKey}) "
+    "MATCH (n:Airway {airwayKey: row.resolvedNodeKey}) "
+    "MERGE (s)-[:USES_AIRWAY]->(n)"
+)
+
+USES_PROCEDURE_QUERY = (
+    "UNWIND $rows AS row "
+    "MATCH (s:RouteSegment {segmentKey: row.segmentKey}) "
+    "MATCH (n:Procedure {procedureKey: row.resolvedNodeKey}) "
+    "MERGE (s)-[:USES_PROCEDURE]->(n)"
 )
 
 
@@ -82,18 +169,38 @@ def add_display_name(label, row):
         )
     elif label == "Fix":
         row["displayName"] = row.get("FIX_ID")
-    else:
+    elif label == "Navaid":
         row["displayName"] = " ".join(
             value for value in (row.get("NAV_ID"), row.get("NAME"))
             if value
         )
+    elif label == "PreferredRoute":
+        route_type = ":".join(
+            value
+            for value in (row.get("PFR_TYPE_CODE"), row.get("ROUTE_NO"))
+            if value
+        )
+        row["displayName"] = (
+            f"{row.get('ORIGIN_ID', '')}->{row.get('DSTN_ID', '')} "
+            f"{route_type}"
+        ).strip()
+    elif label == "RouteSegment":
+        row["displayName"] = (
+            f"{row.get('segmentType', '')}:{row.get('rawValue', '')}"
+        )
+    elif label == "Airway":
+        row["displayName"] = row.get("airwayId")
+    elif label == "Procedure":
+        row["displayName"] = (
+            f"{row.get('procedureType', '')}:{row.get('procedureId', '')}"
+        )
     return row
 
 
-def node_query(label):
+def node_query(label, key_field):
     return (
         f"UNWIND $rows AS row "
-        f"MERGE (n:{label} {{nodeKey: row.nodeKey}}) "
+        f"MERGE (n:{label} {{{key_field}: row.key}}) "
         f"SET n += row.props"
     )
 
@@ -152,19 +259,138 @@ def import_graph(driver, clean_dir, reset=False, batch_size=1000):
         for query in CONSTRAINT_QUERIES:
             session.run(query).consume()
 
-        for filename, label in NODE_FILES:
+        for filename, label, key_field, integer_fields in NODE_FILES:
             records = [
                 add_display_name(label, row)
-                for row in read_records(clean_dir / filename)
+                for row in read_records(
+                    clean_dir / filename,
+                    integer_fields=set(integer_fields),
+                )
             ]
             rows = [
-                {"nodeKey": row["nodeKey"], "props": row}
+                {"key": row[key_field], "props": row}
                 for row in records
-                if row.get("nodeKey")
+                if row.get(key_field)
             ]
             counts[label] = run_batches(
-                session, node_query(label), rows, batch_size, label
+                session,
+                node_query(label, key_field),
+                rows,
+                batch_size,
+                label,
             )
+
+        route_records = read_records(
+            clean_dir / "clean_preferred_routes.csv"
+        )
+        origin_rows = [
+            {"routeKey": row["routeKey"], "airportId": row["ORIGIN_ID"]}
+            for row in route_records
+        ]
+        destination_rows = [
+            {"routeKey": row["routeKey"], "airportId": row["DSTN_ID"]}
+            for row in route_records
+        ]
+        counts["ORIGIN_OF"] = run_batches(
+            session, ORIGIN_QUERY, origin_rows, batch_size, "ORIGIN_OF"
+        )
+        counts["DESTINATION_AIRPORT"] = run_batches(
+            session,
+            DESTINATION_QUERY,
+            destination_rows,
+            batch_size,
+            "DESTINATION_AIRPORT",
+        )
+
+        segment_records = read_records(
+            clean_dir / "clean_route_segments.csv",
+            integer_fields={"segmentSeq"},
+        )
+        has_segment_rows = [
+            {
+                "routeKey": row["routeKey"],
+                "segmentKey": row["segmentKey"],
+                "seq": row["segmentSeq"],
+            }
+            for row in segment_records
+        ]
+        counts["HAS_SEGMENT"] = run_batches(
+            session,
+            HAS_SEGMENT_QUERY,
+            has_segment_rows,
+            batch_size,
+            "HAS_SEGMENT",
+        )
+
+        segments_by_route = {}
+        for row in segment_records:
+            segments_by_route.setdefault(row["routeKey"], []).append(row)
+        next_segment_rows = []
+        for segments in segments_by_route.values():
+            ordered = sorted(segments, key=lambda row: row["segmentSeq"])
+            next_segment_rows.extend(
+                {
+                    "fromSegmentKey": first["segmentKey"],
+                    "toSegmentKey": second["segmentKey"],
+                }
+                for first, second in zip(ordered, ordered[1:])
+            )
+        counts["NEXT_SEGMENT"] = run_batches(
+            session,
+            NEXT_SEGMENT_QUERY,
+            next_segment_rows,
+            batch_size,
+            "NEXT_SEGMENT",
+        )
+
+        reference_rows = [
+            {
+                "segmentKey": row["segmentKey"],
+                "resolvedNodeKey": row["resolvedNodeKey"],
+            }
+            for row in segment_records
+            if row.get("resolvedEntityType") in {"Fix", "Navaid"}
+            and row.get("resolvedNodeKey")
+        ]
+        counts["REFERENCES"] = run_batches(
+            session,
+            REFERENCES_QUERY,
+            reference_rows,
+            batch_size,
+            "REFERENCES",
+        )
+        airway_rows = [
+            {
+                "segmentKey": row["segmentKey"],
+                "resolvedNodeKey": row["resolvedNodeKey"],
+            }
+            for row in segment_records
+            if row.get("resolvedEntityType") == "Airway"
+            and row.get("resolvedNodeKey")
+        ]
+        counts["USES_AIRWAY"] = run_batches(
+            session,
+            USES_AIRWAY_QUERY,
+            airway_rows,
+            batch_size,
+            "USES_AIRWAY",
+        )
+        procedure_rows = [
+            {
+                "segmentKey": row["segmentKey"],
+                "resolvedNodeKey": row["resolvedNodeKey"],
+            }
+            for row in segment_records
+            if row.get("resolvedEntityType") == "Procedure"
+            and row.get("resolvedNodeKey")
+        ]
+        counts["USES_PROCEDURE"] = run_batches(
+            session,
+            USES_PROCEDURE_QUERY,
+            procedure_rows,
+            batch_size,
+            "USES_PROCEDURE",
+        )
 
         records = read_records(
             clean_dir / "clean_edges_bidirectional.csv",
@@ -186,9 +412,20 @@ def import_graph(driver, clean_dir, reset=False, batch_size=1000):
             and row.get("fromNodeKey")
             and row.get("toNodeKey")
         ]
-        counts["ROUTE_EDGE"] = run_batches(
-            session, EDGE_QUERY, rows, batch_size, "ROUTE_EDGE"
-        )
+        edge_groups = {}
+        for row in rows:
+            source = row["props"]
+            pair = (source["fromType"], source["toType"])
+            edge_groups.setdefault(pair, []).append(row)
+        counts["ROUTE_EDGE"] = 0
+        for (from_label, to_label), group in sorted(edge_groups.items()):
+            counts["ROUTE_EDGE"] += run_batches(
+                session,
+                edge_query(from_label, to_label),
+                group,
+                batch_size,
+                f"ROUTE_EDGE {from_label}->{to_label}",
+            )
         counts["skipped_edges"] = skipped
 
         database_counts = {
@@ -200,6 +437,18 @@ def import_graph(driver, clean_dir, reset=False, batch_size=1000):
             ).single()["count"],
             "Navaid": session.run(
                 "MATCH (n:Navaid) RETURN count(n) AS count"
+            ).single()["count"],
+            "PreferredRoute": session.run(
+                "MATCH (n:PreferredRoute) RETURN count(n) AS count"
+            ).single()["count"],
+            "RouteSegment": session.run(
+                "MATCH (n:RouteSegment) RETURN count(n) AS count"
+            ).single()["count"],
+            "Airway": session.run(
+                "MATCH (n:Airway) RETURN count(n) AS count"
+            ).single()["count"],
+            "Procedure": session.run(
+                "MATCH (n:Procedure) RETURN count(n) AS count"
             ).single()["count"],
             "ROUTE_EDGE": session.run(
                 "MATCH ()-[r:ROUTE_EDGE]->() RETURN count(r) AS count"
