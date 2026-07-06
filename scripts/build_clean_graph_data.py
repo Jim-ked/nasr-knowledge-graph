@@ -1,7 +1,7 @@
 import argparse
 import csv
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -20,6 +20,7 @@ ID_FIELDS = {
     "FIX_ID",
     "NAV_ID",
     "NAV_TYPE",
+    "NEXT_SEG",
     "ICAO_REGION_CODE",
     "STATE_CODE",
     "COUNTRY_CODE",
@@ -52,6 +53,22 @@ ROUTE_COLUMNS = (
     "routeKey", "ORIGIN_ID", "DSTN_ID", "PFR_TYPE_CODE", "ROUTE_NO",
     "ALT_DESCRIP", "AIRCRAFT", "HOURS", "ROUTE_DIR_DESCRIP", "DESIGNATOR",
     "ROUTE_STRING",
+)
+
+PREFERRED_ROUTE_COLUMNS = ROUTE_COLUMNS + (
+    "semanticStatus", "searchProjectionStatus",
+)
+
+ROUTE_SEGMENT_COLUMNS = (
+    "segmentKey", "routeKey", "segmentSeq", "segmentType", "rawValue",
+    "stateCode", "countryCode", "icaoRegionCode", "navType", "nextSeg",
+    "resolvedNodeKey", "resolvedEntityType", "resolveStatus",
+)
+
+AIRWAY_COLUMNS = ("airwayKey", "airwayId", "sourceSegmentCount")
+
+PROCEDURE_COLUMNS = (
+    "procedureKey", "procedureId", "procedureType", "sourceSegmentCount",
 )
 
 EDGE_COLUMNS = (
@@ -146,6 +163,45 @@ def write_csv(path, columns, rows):
         writer.writerows(rows)
 
 
+def segment_key(route_key_value, sequence):
+    return f"{route_key_value}:{int(float(sequence)):03d}"
+
+
+def resolve_segment(row, fixes, navaids):
+    segment_type = row["SEG_TYPE"]
+    raw_value = row["SEG_VALUE"]
+    if segment_type == "FIX":
+        if raw_value in fixes:
+            return f"FIX:{raw_value}", "Fix", "resolved_fix"
+        return "", "Unresolved", "missing_fix_reference"
+    if segment_type == "NAVAID":
+        key = (raw_value, row["NAV_TYPE"])
+        if key in navaids:
+            return (
+                f"NAVAID:{key[0]}:{key[1]}",
+                "Navaid",
+                "resolved_navaid",
+            )
+        return "", "Unresolved", "missing_navaid_reference"
+    if segment_type == "AIRWAY":
+        return (
+            f"AIRWAY:{raw_value}",
+            "Airway",
+            "unresolved_airway_placeholder",
+        )
+    if segment_type in {"DP", "STAR"}:
+        return (
+            f"PROCEDURE:{segment_type}:{raw_value}",
+            "Procedure",
+            "unresolved_procedure_placeholder",
+        )
+    if segment_type == "RADIAL":
+        return "", "Unresolved", "unsupported_radial"
+    if segment_type == "FRD":
+        return "", "Unresolved", "unsupported_frd"
+    return "", "Unresolved", "unsupported_segment_type"
+
+
 def build_clean_graph_data(input_path, output_dir):
     input_path = Path(input_path)
     output_dir = Path(output_dir)
@@ -191,6 +247,9 @@ def build_clean_graph_data(input_path, output_dir):
 
     valid_keys = {route_key(row) for row in valid_before_points}
     route_points = defaultdict(list)
+    route_segment_output = []
+    segment_type_counts = Counter()
+    resolve_status_counts = Counter()
     dropped_non_points = 0
     unmatched_fixes = 0
     unmatched_navaids = 0
@@ -201,42 +260,48 @@ def build_clean_graph_data(input_path, output_dir):
             continue
 
         segment_type = row["SEG_TYPE"]
+        resolved_key, entity_type, resolve_status = resolve_segment(
+            row, fixes, navaids
+        )
+        segment_type_counts[segment_type] += 1
+        resolve_status_counts[resolve_status] += 1
+        route_segment_output.append({
+            "segmentKey": segment_key(key, row["SEGMENT_SEQ"]),
+            "routeKey": key,
+            "segmentSeq": int(float(row["SEGMENT_SEQ"])),
+            "segmentType": segment_type,
+            "rawValue": row["SEG_VALUE"],
+            "stateCode": row.get("STATE_CODE", ""),
+            "countryCode": row.get("COUNTRY_CODE", ""),
+            "icaoRegionCode": row.get("ICAO_REGION_CODE", ""),
+            "navType": row.get("NAV_TYPE", ""),
+            "nextSeg": row.get("NEXT_SEG", ""),
+            "resolvedNodeKey": resolved_key,
+            "resolvedEntityType": entity_type,
+            "resolveStatus": resolve_status,
+        })
+
         if segment_type not in {"FIX", "NAVAID"}:
             dropped_non_points += 1
             continue
 
-        if segment_type == "FIX":
-            point_id = row["SEG_VALUE"]
-            if point_id not in fixes:
+        if not resolved_key:
+            if segment_type == "FIX":
                 unmatched_fixes += 1
-                continue
-            point_key = f"FIX:{point_id}"
-        else:
-            navaid_key = (row["SEG_VALUE"], row["NAV_TYPE"])
-            if navaid_key not in navaids:
+            else:
                 unmatched_navaids += 1
-                continue
-            point_key = f"NAVAID:{navaid_key[0]}:{navaid_key[1]}"
+            continue
 
         sequence = float(row["SEGMENT_SEQ"])
-        route_points[key].append((sequence, point_key))
+        route_points[key].append((sequence, resolved_key))
 
-    valid_routes = []
-    for row in valid_before_points:
-        key = route_key(row)
-        if route_points[key]:
-            valid_routes.append(row)
-        else:
-            rejected.append(
-                output_row(
-                    row, REJECT_COLUMNS, routeKey=key,
-                    rejectReason="no_fix_or_navaid_after_cleaning",
-                )
-            )
+    valid_routes = [
+        row for row in valid_before_points if route_points[route_key(row)]
+    ]
 
     airport_ids = {
         row[field]
-        for row in valid_routes
+        for row in valid_before_points
         for field in ("ORIGIN_ID", "DSTN_ID")
     }
     fix_ids = set()
@@ -319,11 +384,73 @@ def build_clean_graph_data(input_path, output_dir):
         output_row(row, ROUTE_COLUMNS, routeKey=route_key(row))
         for row in valid_routes
     ]
+    preferred_route_output = [
+        output_row(
+            row,
+            PREFERRED_ROUTE_COLUMNS,
+            routeKey=route_key(row),
+            semanticStatus="valid_semantic_route",
+            searchProjectionStatus=(
+                "projected"
+                if route_points[route_key(row)]
+                else "no_resolved_point"
+            ),
+        )
+        for row in valid_before_points
+    ]
+    airway_counts = Counter(
+        row["resolvedNodeKey"]
+        for row in route_segment_output
+        if row["resolvedEntityType"] == "Airway"
+    )
+    airway_output = [
+        {
+            "airwayKey": key,
+            "airwayId": key.split(":", 1)[1],
+            "sourceSegmentCount": count,
+        }
+        for key, count in sorted(airway_counts.items())
+    ]
+    procedure_counts = Counter(
+        row["resolvedNodeKey"]
+        for row in route_segment_output
+        if row["resolvedEntityType"] == "Procedure"
+    )
+    procedure_output = [
+        {
+            "procedureKey": key,
+            "procedureId": key.split(":", 2)[2],
+            "procedureType": key.split(":", 2)[1],
+            "sourceSegmentCount": count,
+        }
+        for key, count in sorted(procedure_counts.items())
+    ]
 
     write_csv(output_dir / "clean_airports.csv", AIRPORT_COLUMNS, airport_output)
     write_csv(output_dir / "clean_fixes.csv", FIX_COLUMNS, fix_output)
     write_csv(output_dir / "clean_navaids.csv", NAVAID_COLUMNS, navaid_output)
     write_csv(output_dir / "clean_routes.csv", ROUTE_COLUMNS, route_output)
+    write_csv(
+        output_dir / "clean_preferred_routes.csv",
+        PREFERRED_ROUTE_COLUMNS,
+        preferred_route_output,
+    )
+    write_csv(
+        output_dir / "clean_route_segments.csv",
+        ROUTE_SEGMENT_COLUMNS,
+        sorted(
+            route_segment_output,
+            key=lambda row: (row["routeKey"], row["segmentSeq"]),
+        ),
+    )
+    write_csv(
+        output_dir / "clean_airways.csv", AIRWAY_COLUMNS, airway_output
+    )
+    write_csv(
+        output_dir / "clean_procedures.csv",
+        PROCEDURE_COLUMNS,
+        procedure_output,
+    )
     write_csv(
         output_dir / "clean_edges_original.csv", EDGE_COLUMNS, original_edges
     )
@@ -348,6 +475,31 @@ def build_clean_graph_data(input_path, output_dir):
         "nav_base_rows": len(nav_rows),
         "valid_routes_before_point_filter": len(valid_before_points),
         "valid_routes_after_point_filter": len(valid_routes),
+        "semantic_routes": len(preferred_route_output),
+        "search_projected_routes": len(valid_routes),
+        "routes_without_search_projection": (
+            len(preferred_route_output) - len(valid_routes)
+        ),
+        "route_segments_total": len(route_segment_output),
+        "segment_type_counts": dict(sorted(segment_type_counts.items())),
+        "resolved_fix_segments": resolve_status_counts["resolved_fix"],
+        "resolved_navaid_segments": resolve_status_counts["resolved_navaid"],
+        "unresolved_airway_segments": resolve_status_counts[
+            "unresolved_airway_placeholder"
+        ],
+        "unresolved_procedure_segments": resolve_status_counts[
+            "unresolved_procedure_placeholder"
+        ],
+        "unsupported_radial_segments": resolve_status_counts[
+            "unsupported_radial"
+        ],
+        "unsupported_frd_segments": resolve_status_counts["unsupported_frd"],
+        "missing_fix_reference_segments": resolve_status_counts[
+            "missing_fix_reference"
+        ],
+        "missing_navaid_reference_segments": resolve_status_counts[
+            "missing_navaid_reference"
+        ],
         "airport_nodes": len(airport_output),
         "fix_nodes": len(fix_output),
         "navaid_nodes": len(navaid_output),

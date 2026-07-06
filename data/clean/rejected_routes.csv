@@ -2539,9 +2539,3 @@ ZVR:SEA:SHD:1,ZVR,SEA,SHD,1,origin_airport_not_found
 ZVR:SEA:SHD:2,ZVR,SEA,SHD,2,origin_airport_not_found
 ZVR:SEA:SHD:3,ZVR,SEA,SHD,3,origin_airport_not_found
 ZVR:SEA:SHD:4,ZVR,SEA,SHD,4,origin_airport_not_found
-BAF:PTW:HPD:1,BAF,PTW,HPD,1,no_fix_or_navaid_after_cleaning
-BDR:LGA:TEC:1,BDR,LGA,TEC,1,no_fix_or_navaid_after_cleaning
-EWR:JFK:TEC:1,EWR,JFK,TEC,1,no_fix_or_navaid_after_cleaning
-EYW:FLL:H:1,EYW,FLL,H,1,no_fix_or_navaid_after_cleaning
-EYW:MIA:H:1,EYW,MIA,H,1,no_fix_or_navaid_after_cleaning
-FSM:MEM:SHD:1,FSM,MEM,SHD,1,no_fix_or_navaid_after_cleaning
