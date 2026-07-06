@@ -2,10 +2,14 @@ import unittest
 
 from scripts.import_to_neo4j import (
     CONSTRAINT_QUERIES,
-    EDGE_QUERY,
+    HAS_SEGMENT_QUERY,
+    REFERENCES_QUERY,
+    USES_AIRWAY_QUERY,
+    USES_PROCEDURE_QUERY,
     add_display_name,
     batches,
     clean_value,
+    edge_query,
     node_query,
 )
 from scripts.query_route import (
@@ -35,12 +39,34 @@ class ImportHelpersTests(unittest.TestCase):
         navaid = add_display_name(
             "Navaid", {"NAV_ID": "HNN", "NAME": "Henderson"}
         )
+        route = add_display_name(
+            "PreferredRoute",
+            {
+                "ORIGIN_ID": "ATL",
+                "DSTN_ID": "LAX",
+                "PFR_TYPE_CODE": "H",
+                "ROUTE_NO": "1",
+            },
+        )
+        segment = add_display_name(
+            "RouteSegment", {"segmentType": "AIRWAY", "rawValue": "J6"}
+        )
 
         self.assertEqual(airport["displayName"], "ATL Atlanta")
         self.assertEqual(fix["displayName"], "BURGG")
         self.assertEqual(navaid["displayName"], "HNN Henderson")
-        for label in ("Airport", "Fix", "Navaid"):
-            query = node_query(label)
+        self.assertEqual(route["displayName"], "ATL->LAX H:1")
+        self.assertEqual(segment["displayName"], "AIRWAY:J6")
+        for label, key in (
+            ("Airport", "nodeKey"),
+            ("Fix", "nodeKey"),
+            ("Navaid", "nodeKey"),
+            ("PreferredRoute", "routeKey"),
+            ("RouteSegment", "segmentKey"),
+            ("Airway", "airwayKey"),
+            ("Procedure", "procedureKey"),
+        ):
+            query = node_query(label, key)
             self.assertIn(f"MERGE (n:{label} ", query)
             self.assertNotIn("RouteNode", query)
 
@@ -50,10 +76,19 @@ class ImportHelpersTests(unittest.TestCase):
         self.assertIn("airport_node_key", schema)
         self.assertIn("fix_node_key", schema)
         self.assertIn("navaid_node_key", schema)
+        self.assertIn("preferred_route_key", schema)
+        self.assertIn("route_segment_key", schema)
+        self.assertIn("airway_key", schema)
+        self.assertIn("procedure_key", schema)
         self.assertNotIn("FOR (n:RouteNode)", schema)
-        self.assertIn("MATCH (a {nodeKey: row.fromNodeKey})", EDGE_QUERY)
-        self.assertIn("MATCH (b {nodeKey: row.toNodeKey})", EDGE_QUERY)
-        self.assertNotIn(":RouteNode", EDGE_QUERY)
+        query = edge_query("Airport", "Fix")
+        self.assertIn("MATCH (a:Airport {nodeKey: row.fromNodeKey})", query)
+        self.assertIn("MATCH (b:Fix {nodeKey: row.toNodeKey})", query)
+        self.assertNotIn(":RouteNode", query)
+        self.assertIn("MERGE (r)-[:HAS_SEGMENT", HAS_SEGMENT_QUERY)
+        self.assertIn("MERGE (s)-[:REFERENCES]->(n)", REFERENCES_QUERY)
+        self.assertIn("MERGE (s)-[:USES_AIRWAY]->(n)", USES_AIRWAY_QUERY)
+        self.assertIn("MERGE (s)-[:USES_PROCEDURE]->(n)", USES_PROCEDURE_QUERY)
 
 
 class RouteQueryTests(unittest.TestCase):
