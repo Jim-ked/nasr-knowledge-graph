@@ -70,7 +70,7 @@ PROCEDURE_COLUMNS = (
 PROCEDURE_PATH_COLUMNS = (
     "procedurePathKey", "procedureKey", "procedureType",
     "routePortionType", "routeName", "bodySeq", "transitionComputerCode",
-    *COMMON,
+    "sourceAggregation", "sourceRowIds", "sourceRowCount", *COMMON,
 )
 
 PROCEDURE_OCCURRENCE_COLUMNS = (
@@ -148,6 +148,31 @@ AUDIT_SEQUENCE_COLUMNS = (
     "sourceTable", "pathKey", "issueType", "detail",
 )
 AUDIT_SUMMARY_COLUMNS = ("metric", "value")
+
+NAVAID_GROUP_ANALYSIS_COLUMNS = (
+    "navId", "navType", "groupSize", "sourceRowIds", "distinctNameCount",
+    "nameList", "distinctCityCount", "cityList", "distinctStateCount",
+    "stateList", "distinctCountryCount", "countryList", "distinctFreqCount",
+    "freqList", "distinctChanCount", "chanList", "latLonList",
+    "navStatusList", "nasUseFlagList", "publicUseFlagList",
+    "appearsInAwySegCount", "appearsInDpRteCount", "appearsInStarRteCount",
+    "appearsInPfrSegCount", "preliminaryPattern",
+)
+
+NAVAID_GROUP_DETAIL_COLUMNS = (
+    "navId", "navType", "sourceRowId", "name", "city", "stateCode",
+    "countryCode", "regionCode", "lat", "lon", "freq", "chan",
+    "navStatus", "nasUseFlag", "publicUseFlag", "highAltArtccId",
+    "lowAltArtccId", "legacyNavIdTypeKey", "currentPointKey",
+)
+
+NAVAID_REFERENCE_AMBIGUITY_COLUMNS = (
+    "sourceTable", "sourceRowId", "sourceObjectKey", "rawValue",
+    "rawNavType", "contextStateCode", "contextCountryCode",
+    "contextIcaoRegionCode", "candidateCountByNavIdType",
+    "candidatePointKeys", "candidateSourceRowIds", "currentResolvedPointKey",
+    "currentResolveStatus", "ambiguityReason",
+)
 
 
 def clean(value):
@@ -304,6 +329,145 @@ def duplicate_audit(table, key_type, rows_and_keys):
         }
         for key, ids in sorted(row_ids.items())
     ]
+
+
+def sorted_values(values):
+    return sorted({clean(value) for value in values if clean(value)})
+
+
+def pipe(values):
+    return "|".join(sorted_values(values))
+
+
+def lat_lon(row):
+    lat = clean(row.get("LAT_DECIMAL"))
+    lon = clean(row.get("LONG_DECIMAL"))
+    return f"{lat},{lon}" if lat or lon else ""
+
+
+def navaid_group_pattern(rows):
+    if len(rows) == 1:
+        return "single_record"
+    names = sorted_values(row.get("NAME") for row in rows)
+    cities = sorted_values(row.get("CITY") for row in rows)
+    states = sorted_values(row.get("STATE_CODE") for row in rows)
+    freqs = sorted_values(row.get("FREQ") for row in rows)
+    coords = sorted_values(lat_lon(row) for row in rows)
+    if not coords or not states or not cities:
+        return "same_id_type_missing_location"
+    if len(names) == len(cities) == len(coords) == 1:
+        return "same_name_same_city_same_coord"
+    if len(freqs) > 1:
+        return "same_id_type_different_freq"
+    if len(states) > 1:
+        return "same_id_type_different_state"
+    if len(cities) > 1:
+        return "same_id_type_different_city"
+    return "insufficient_fields"
+
+
+def source_object_key_for_reference(table, row):
+    if table == "AWY_SEG_ALT":
+        return airway_occurrence_key(
+            row.get("AWY_ID"), row.get("AWY_LOCATION"), row.get("POINT_SEQ")
+        )
+    if table == "DP_RTE":
+        proc_key = f"PROCEDURE:DP:{key_part(row.get('DP_COMPUTER_CODE'))}"
+        return procedure_occurrence_key(procedure_path_key(proc_key, row), row.get("POINT_SEQ"))
+    if table == "STAR_RTE":
+        proc_key = f"PROCEDURE:STAR:{key_part(row.get('STAR_COMPUTER_CODE'))}"
+        return procedure_occurrence_key(procedure_path_key(proc_key, row), row.get("POINT_SEQ"))
+    if table == "PFR_SEG":
+        return template_token_key(pfr_template_key(row), row.get("SEGMENT_SEQ"))
+    return ""
+
+
+def is_navaid_reference(raw_type):
+    return key_part(raw_type) in {
+        "NAVAID", "VOR", "VOR/DME", "VORTAC", "TACAN", "NDB", "DME",
+    }
+
+
+def sequence_sort_key(item):
+    seq = clean(item.get("pointSeq") or item.get("POINT_SEQ"))
+    try:
+        return 0, int(float(seq))
+    except ValueError:
+        return 1, seq
+
+
+def sequence_issue(table, path_key, issue_type, **detail):
+    return {
+        "sourceTable": table,
+        "pathKey": path_key,
+        "issueType": issue_type,
+        "detail": ";".join(f"{key}={value}" for key, value in detail.items()),
+    }
+
+
+def audit_path_sequence(rows, table, path_key, point_col, next_col):
+    issues = []
+    seen = defaultdict(list)
+    for row in rows:
+        seq = clean(row.get("POINT_SEQ"))
+        if not seq:
+            issues.append(
+                sequence_issue(
+                    table, path_key, "empty_point_seq",
+                    sourceRowId=row.get("_sourceRowId", ""),
+                )
+            )
+            continue
+        try:
+            float(seq)
+        except ValueError:
+            issues.append(
+                sequence_issue(
+                    table, path_key, "non_numeric_point_seq",
+                    sourceRowId=row.get("_sourceRowId", ""),
+                    pointSeq=seq,
+                )
+            )
+        seen[seq].append(row.get("_sourceRowId", ""))
+    for seq, row_ids in sorted(seen.items()):
+        if len(row_ids) > 1:
+            issues.append(
+                sequence_issue(
+                    table, path_key, "duplicate_point_seq",
+                    pointSeq=seq, sourceRowIds="|".join(row_ids),
+                )
+            )
+
+    ordered = sorted(rows, key=sequence_sort_key)
+    for current, nxt in zip(ordered, ordered[1:]):
+        current_next = clean_id(current.get(next_col))
+        next_point = clean_id(nxt.get(point_col))
+        if current_next != next_point:
+            if table == "AWY_SEG_ALT":
+                issues.append(
+                    sequence_issue(
+                        table, path_key, "airway_to_next_from_mismatch",
+                        currentSourceRowId=current.get("_sourceRowId", ""),
+                        nextSourceRowId=nxt.get("_sourceRowId", ""),
+                        currentToPoint=current.get(next_col, ""),
+                        nextFromPoint=nxt.get(point_col, ""),
+                        currentPointSeq=current.get("POINT_SEQ", ""),
+                        nextPointSeq=nxt.get("POINT_SEQ", ""),
+                    )
+                )
+            else:
+                issues.append(
+                    sequence_issue(
+                        table, path_key, "procedure_next_point_mismatch",
+                        currentSourceRowId=current.get("_sourceRowId", ""),
+                        nextSourceRowId=nxt.get("_sourceRowId", ""),
+                        currentNextPoint=current.get(next_col, ""),
+                        nextPoint=nxt.get(point_col, ""),
+                        currentPointSeq=current.get("POINT_SEQ", ""),
+                        nextPointSeq=nxt.get("POINT_SEQ", ""),
+                    )
+                )
+    return issues
 
 
 def one_to_one_map(rows, key_func):
@@ -506,6 +670,15 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         ])
     )
     airport_map = one_to_one_map(apt_base, lambda row: airport_key(row.get("ARPT_ID")))
+    for row in apt_base:
+        key = airport_key(row.get("ARPT_ID"))
+        if key not in airport_map:
+            rejected_rows.append({
+                "sourceTable": "APT_BASE",
+                "sourceRowId": row.get("_sourceRowId", ""),
+                "key": key,
+                "reason": "invalid_or_duplicate_airport_key",
+            })
 
     airports = []
     for key, row in sorted(airport_map.items()):
@@ -674,6 +847,127 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         })
     indexes = build_route_point_indexes(route_points)
 
+    navaid_groups = defaultdict(list)
+    for row in nav_base:
+        navaid_groups[(key_part(row.get("NAV_ID")), key_part(row.get("NAV_TYPE")))].append(row)
+
+    navaid_reference_sources = []
+    for table, rows, raw_col, type_col in (
+        ("AWY_SEG_ALT", awy_seg, "FROM_POINT", "FROM_PT_TYPE"),
+        ("DP_RTE", dp_rte, "POINT", "POINT_TYPE"),
+        ("STAR_RTE", star_rte, "POINT", "POINT_TYPE"),
+    ):
+        for row in rows:
+            if is_navaid_reference(row.get(type_col)):
+                navaid_reference_sources.append((table, row, raw_col, type_col))
+    for row in pfr_seg:
+        if key_part(row.get("SEG_TYPE")) == "NAVAID":
+            navaid_reference_sources.append(("PFR_SEG", row, "SEG_VALUE", "NAV_TYPE"))
+
+    navaid_reference_counts = {
+        "AWY_SEG_ALT": Counter(),
+        "DP_RTE": Counter(),
+        "STAR_RTE": Counter(),
+        "PFR_SEG": Counter(),
+    }
+    for table, row, raw_col, type_col in navaid_reference_sources:
+        navaid_reference_counts[table][
+            (key_part(row.get(raw_col)), key_part(row.get(type_col)))
+        ] += 1
+
+    navaid_group_analysis = []
+    for (nav_id, nav_type), rows in sorted(navaid_groups.items()):
+        navaid_group_analysis.append({
+            "navId": nav_id,
+            "navType": nav_type,
+            "groupSize": len(rows),
+            "sourceRowIds": "|".join(row["_sourceRowId"] for row in rows),
+            "distinctNameCount": len(sorted_values(row.get("NAME") for row in rows)),
+            "nameList": pipe(row.get("NAME") for row in rows),
+            "distinctCityCount": len(sorted_values(row.get("CITY") for row in rows)),
+            "cityList": pipe(row.get("CITY") for row in rows),
+            "distinctStateCount": len(sorted_values(row.get("STATE_CODE") for row in rows)),
+            "stateList": pipe(row.get("STATE_CODE") for row in rows),
+            "distinctCountryCount": len(sorted_values(row.get("COUNTRY_CODE") for row in rows)),
+            "countryList": pipe(row.get("COUNTRY_CODE") for row in rows),
+            "distinctFreqCount": len(sorted_values(row.get("FREQ") for row in rows)),
+            "freqList": pipe(row.get("FREQ") for row in rows),
+            "distinctChanCount": len(sorted_values(row.get("CHAN") for row in rows)),
+            "chanList": pipe(row.get("CHAN") for row in rows),
+            "latLonList": pipe(lat_lon(row) for row in rows),
+            "navStatusList": pipe(row.get("NAV_STATUS") for row in rows),
+            "nasUseFlagList": pipe(row.get("NAS_USE_FLAG") for row in rows),
+            "publicUseFlagList": pipe(row.get("PUBLIC_USE_FLAG") for row in rows),
+            "appearsInAwySegCount": navaid_reference_counts["AWY_SEG_ALT"][(nav_id, nav_type)],
+            "appearsInDpRteCount": navaid_reference_counts["DP_RTE"][(nav_id, nav_type)],
+            "appearsInStarRteCount": navaid_reference_counts["STAR_RTE"][(nav_id, nav_type)],
+            "appearsInPfrSegCount": navaid_reference_counts["PFR_SEG"][(nav_id, nav_type)],
+            "preliminaryPattern": navaid_group_pattern(rows),
+        })
+
+    navaid_group_detail = []
+    navaid_source_rows_by_point = {}
+    for row in nav_base:
+        point_key = navaid_key(row)
+        navaid_source_rows_by_point[point_key] = row.get("_sourceRowId", "")
+        navaid_group_detail.append({
+            "navId": key_part(row.get("NAV_ID")),
+            "navType": key_part(row.get("NAV_TYPE")),
+            "sourceRowId": row.get("_sourceRowId", ""),
+            "name": row.get("NAME", ""),
+            "city": row.get("CITY", ""),
+            "stateCode": row.get("STATE_CODE", ""),
+            "countryCode": row.get("COUNTRY_CODE", ""),
+            "regionCode": row.get("REGION_CODE", ""),
+            "lat": row.get("LAT_DECIMAL", ""),
+            "lon": row.get("LONG_DECIMAL", ""),
+            "freq": row.get("FREQ", ""),
+            "chan": row.get("CHAN", ""),
+            "navStatus": row.get("NAV_STATUS", ""),
+            "nasUseFlag": row.get("NAS_USE_FLAG", ""),
+            "publicUseFlag": row.get("PUBLIC_USE_FLAG", ""),
+            "highAltArtccId": row.get("HIGH_ALT_ARTCC_ID", ""),
+            "lowAltArtccId": row.get("LOW_ALT_ARTCC_ID", ""),
+            "legacyNavIdTypeKey": join_key("POINT", "NAVAID", row.get("NAV_ID"), row.get("NAV_TYPE")),
+            "currentPointKey": point_key,
+        })
+
+    navaid_reference_ambiguity = []
+    for table, row, raw_col, type_col in navaid_reference_sources:
+        raw_value = key_part(row.get(raw_col))
+        raw_nav_type = key_part(row.get(type_col))
+        candidates = sorted(indexes["navaids_by_id_type"].get((raw_value, raw_nav_type), []))
+        resolved_key, status, _, _ = resolve_route_point(
+            row.get(raw_col), row.get(type_col), row, indexes
+        )
+        if len(candidates) > 1 and not resolved_key:
+            reason = "ambiguous_navaid_reference"
+        elif len(candidates) > 1:
+            reason = "resolved_by_context"
+        elif len(candidates) == 1:
+            reason = "single_candidate"
+        else:
+            reason = "no_candidate"
+        navaid_reference_ambiguity.append({
+            "sourceTable": table,
+            "sourceRowId": row.get("_sourceRowId", ""),
+            "sourceObjectKey": source_object_key_for_reference(table, row),
+            "rawValue": row.get(raw_col, ""),
+            "rawNavType": row.get(type_col, ""),
+            "contextStateCode": row.get("STATE_CODE", ""),
+            "contextCountryCode": row.get("COUNTRY_CODE", ""),
+            "contextIcaoRegionCode": row.get("ICAO_REGION_CODE", ""),
+            "candidateCountByNavIdType": len(candidates),
+            "candidatePointKeys": "|".join(candidates),
+            "candidateSourceRowIds": "|".join(
+                navaid_source_rows_by_point.get(candidate, "")
+                for candidate in candidates
+            ),
+            "currentResolvedPointKey": resolved_key,
+            "currentResolveStatus": status,
+            "ambiguityReason": reason,
+        })
+
     awy_by_id = defaultdict(list)
     for row in awy_base:
         awy_by_id[key_part(row.get("AWY_ID"))].append(row)
@@ -783,14 +1077,15 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
                 "icaoRegionCode": row.get("ICAO_REGION_CODE", ""),
                 **source_props("AWY_SEG_ALT", row),
             })
-        seqs = [numeric_seq(item["pointSeq"]) for item in ordered]
-        if seqs and seqs != sorted(seqs):
-            sequence_rows.append({
-                "sourceTable": "AWY_SEG_ALT",
-                "pathKey": path_key,
-                "issueType": "sequence_order",
-                "detail": "|".join(map(str, seqs)),
-            })
+        sequence_rows.extend(
+            audit_path_sequence(
+                [item["_row"] for item in items],
+                "AWY_SEG_ALT",
+                path_key,
+                "FROM_POINT",
+                "TO_POINT",
+            )
+        )
 
     for item in airway_occurrences:
         item.pop("_row", None)
@@ -840,6 +1135,7 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         return f"PROCEDURE:STAR:{key_part(row.get('STAR_COMPUTER_CODE'))}"
 
     procedure_paths_by_key = {}
+    procedure_path_source_rows = defaultdict(list)
     procedure_occurrences = []
     rel_procedure_path_has_occurrence = []
     rel_procedure_occurrence_resolves_to = []
@@ -849,6 +1145,7 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         for row in rows:
             proc_key = procedure_key_for_rte(proc_type, row)
             path_key = procedure_path_key(proc_key, row)
+            procedure_path_source_rows[path_key].append(row.get("_sourceRowId", ""))
             procedure_paths_by_key[path_key] = {
                 "procedurePathKey": path_key,
                 "procedureKey": proc_key,
@@ -857,6 +1154,7 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
                 "routeName": row.get("ROUTE_NAME", ""),
                 "bodySeq": row.get("BODY_SEQ", ""),
                 "transitionComputerCode": row.get("TRANSITION_COMPUTER_CODE", ""),
+                "sourceAggregation": "true",
                 **source_props(table, row),
             }
             occ_key = procedure_occurrence_key(path_key, row.get("POINT_SEQ"))
@@ -891,7 +1189,12 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
                     resolve_rel(occ_key, resolved_key, row.get("POINT"), method, status, confidence, table, row)
                 )
 
-    procedure_paths = sorted(procedure_paths_by_key.values(), key=lambda row: row["procedurePathKey"])
+    procedure_paths = []
+    for path_key, path in sorted(procedure_paths_by_key.items()):
+        source_row_ids = procedure_path_source_rows[path_key]
+        path["sourceRowIds"] = "|".join(source_row_ids)
+        path["sourceRowCount"] = len(source_row_ids)
+        procedure_paths.append(path)
     rel_procedure_has_path = [
         base_rel(row["procedureKey"], row["procedurePathKey"], row["sourceTable"], row)
         for row in procedure_paths
@@ -909,6 +1212,16 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
                 "directionStatus": "source_sequence",
                 **source_props(current["_table"], row),
             })
+        if items:
+            sequence_rows.extend(
+                audit_path_sequence(
+                    [item["_row"] for item in items],
+                    items[0]["_table"],
+                    path_key,
+                    "POINT",
+                    "NEXT_POINT",
+                )
+            )
     for item in procedure_occurrences:
         item.pop("_row", None)
         item.pop("_table", None)
@@ -1165,6 +1478,21 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
     write_csv(audit_dir / "audit_unresolved_references.csv", AUDIT_UNRESOLVED_COLUMNS, unresolved_rows)
     write_csv(audit_dir / "audit_rejected_rows.csv", AUDIT_REJECTED_COLUMNS, rejected_rows)
     write_csv(audit_dir / "audit_sequence_issues.csv", AUDIT_SEQUENCE_COLUMNS, sequence_rows)
+    write_csv(
+        audit_dir / "navaid_entity_group_analysis.csv",
+        NAVAID_GROUP_ANALYSIS_COLUMNS,
+        navaid_group_analysis,
+    )
+    write_csv(
+        audit_dir / "navaid_entity_group_detail.csv",
+        NAVAID_GROUP_DETAIL_COLUMNS,
+        navaid_group_detail,
+    )
+    write_csv(
+        audit_dir / "navaid_reference_ambiguity_analysis.csv",
+        NAVAID_REFERENCE_AMBIGUITY_COLUMNS,
+        navaid_reference_ambiguity,
+    )
 
     report = {
         "airport_rows": len(airports),
@@ -1184,6 +1512,9 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         "unresolved_reference_audit_rows": len(unresolved_rows),
         "rejected_row_audit_rows": len(rejected_rows),
         "sequence_issue_audit_rows": len(sequence_rows),
+        "navaid_entity_group_analysis_rows": len(navaid_group_analysis),
+        "navaid_entity_group_detail_rows": len(navaid_group_detail),
+        "navaid_reference_ambiguity_analysis_rows": len(navaid_reference_ambiguity),
         "old_projection_files_generated": 0,
     }
     write_csv(

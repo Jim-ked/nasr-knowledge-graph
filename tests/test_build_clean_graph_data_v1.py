@@ -108,12 +108,13 @@ class CleanGraphDataV1Tests(unittest.TestCase):
                 [
                     "AWY_ID", "AWY_LOCATION", "POINT_SEQ", "FROM_POINT",
                     "FROM_PT_TYPE", "TO_POINT", "MAG_COURSE_DIST",
+                    "STATE_CODE", "COUNTRY_CODE", "ICAO_REGION_CODE",
                 ],
                 [
                     {
                         "AWY_ID": "V1", "AWY_LOCATION": "H",
                         "POINT_SEQ": "1", "FROM_POINT": "FIXA",
-                        "FROM_PT_TYPE": "FIX",
+                        "FROM_PT_TYPE": "FIX", "TO_POINT": "WRONG",
                     },
                     {
                         "AWY_ID": "V1", "AWY_LOCATION": "H",
@@ -154,10 +155,10 @@ class CleanGraphDataV1Tests(unittest.TestCase):
                         "ROUTE_NAME": "BODY", "BODY_SEQ": "1",
                         "TRANSITION_COMPUTER_CODE": "T1",
                         "POINT_SEQ": "1", "POINT": "FIXA",
-                        "POINT_TYPE": "FIX", "NEXT_POINT": "AA",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "WRONG",
                     },
                     {
-                        "DP_COMPUTER_CODE": "DP1",
+                        "DP_COMPUTER_CODE": "DP1.BODY",
                         "ROUTE_PORTION_TYPE": "COMMON",
                         "ROUTE_NAME": "BODY", "BODY_SEQ": "1",
                         "TRANSITION_COMPUTER_CODE": "T1",
@@ -245,6 +246,12 @@ class CleanGraphDataV1Tests(unittest.TestCase):
                         "SEGMENT_SEQ": "4", "SEG_VALUE": "090",
                         "SEG_TYPE": "RADIAL",
                     },
+                    {
+                        "ORIGIN_ID": "AAA", "DSTN_ID": "BBB",
+                        "PFR_TYPE_CODE": "TEC", "ROUTE_NO": "1",
+                        "SEGMENT_SEQ": "5", "SEG_VALUE": "AA",
+                        "SEG_TYPE": "NAVAID", "NAV_TYPE": "NDB",
+                    },
                 ],
             )
             write_csv(
@@ -292,12 +299,22 @@ class CleanGraphDataV1Tests(unittest.TestCase):
             tokens = read_csv(clean / "clean_template_tokens.csv")
             refs = read_csv(clean / "rel_template_token_references.csv")
             self.assertEqual(len(templates), 2)
-            self.assertEqual(len(tokens), 4)
+            self.assertEqual(len(tokens), 5)
             self.assertEqual(
                 {row["resolveStatus"] for row in tokens},
-                {"resolved_fix", "resolved_airway", "resolved_procedure", "unsupported"},
+                {
+                    "resolved_fix", "resolved_airway", "resolved_procedure",
+                    "unsupported", "unresolved",
+                },
             )
             self.assertEqual(len(refs), 3)
+
+            procedure_paths = read_csv(clean / "clean_procedure_paths.csv")
+            self.assertIn("sourceAggregation", procedure_paths[0])
+            self.assertIn("sourceRowIds", procedure_paths[0])
+            self.assertIn("sourceRowCount", procedure_paths[0])
+            self.assertEqual(procedure_paths[0]["sourceAggregation"], "true")
+            self.assertEqual(procedure_paths[0]["sourceRowCount"], "2")
 
             procedures = read_csv(clean / "clean_procedures.csv")
             self.assertIn(
@@ -320,6 +337,45 @@ class CleanGraphDataV1Tests(unittest.TestCase):
             self.assertIn(
                 ("NAV_BASE", "POINT:NAVAID:AA:NDB"),
                 {(row["sourceTable"], row["key"]) for row in duplicate_audit},
+            )
+
+            rejected = read_csv(audit / "audit_rejected_rows.csv")
+            self.assertEqual(
+                [row["reason"] for row in rejected],
+                [
+                    "invalid_or_duplicate_airport_key",
+                    "invalid_or_duplicate_airport_key",
+                ],
+            )
+
+            navaid_groups = read_csv(audit / "navaid_entity_group_analysis.csv")
+            self.assertEqual(navaid_groups[0]["navId"], "AA")
+            self.assertEqual(navaid_groups[0]["navType"], "NDB")
+            self.assertEqual(navaid_groups[0]["groupSize"], "2")
+            self.assertNotIn("should_merge", navaid_groups[0])
+            self.assertNotIn("should_split", navaid_groups[0])
+
+            navaid_detail = read_csv(audit / "navaid_entity_group_detail.csv")
+            self.assertEqual(len(navaid_detail), 2)
+            self.assertIn("currentPointKey", navaid_detail[0])
+
+            navaid_refs = read_csv(
+                audit / "navaid_reference_ambiguity_analysis.csv"
+            )
+            self.assertGreaterEqual(len(navaid_refs), 3)
+            self.assertIn(
+                "ambiguous_navaid_reference",
+                {row["ambiguityReason"] for row in navaid_refs},
+            )
+
+            sequence_issues = read_csv(audit / "audit_sequence_issues.csv")
+            self.assertIn(
+                "airway_to_next_from_mismatch",
+                {row["issueType"] for row in sequence_issues},
+            )
+            self.assertIn(
+                "procedure_next_point_mismatch",
+                {row["issueType"] for row in sequence_issues},
             )
 
 

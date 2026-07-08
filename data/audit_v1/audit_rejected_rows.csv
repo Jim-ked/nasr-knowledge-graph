@@ -1,1 +1,4 @@
 sourceTable,sourceRowId,key,reason
+APT_BASE,5354,AIRPORT:0.00E+00,invalid_or_duplicate_airport_key
+APT_BASE,10177,AIRPORT:0.00E+00,invalid_or_duplicate_airport_key
+APT_BASE,10224,AIRPORT:0.00E+00,invalid_or_duplicate_airport_key
