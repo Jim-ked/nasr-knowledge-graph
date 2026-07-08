@@ -1,16 +1,19 @@
 # NASR 静态空中运行路径知识图谱 v1.0
 
-本仓库当前主版本只做一件事：读取 FAA NASR `14_May_2026_CSV/` 原始表，清洗生成静态空中运行路径知识图谱 v1.0 的源事实层 CSV 与审计 CSV。
+本仓库当前主版本读取 FAA NASR `14_May_2026_CSV/` 原始表，清洗生成静态空中运行路径知识图谱 v1.0 的源事实层 CSV 与审计 CSV，并可将源事实层导入 Neo4j。
 
-当前阶段不做 Neo4j 入库，不生成派生搜索边，不做机场间路径搜索投影。
+当前 Neo4j 入库只导入源事实层，不生成派生搜索边，不做机场间路径搜索投影。
 
 ## 当前边界
 
 - 只读取 NASR 静态 CSV 源表。
 - 只生成 `data/clean/` 与 `data/audit/`。
+- 可将 `data/clean/` 中的源事实节点和关系导入 Neo4j。
 - 不生成 `TRAVERSE_TO`。
 - 不生成 `USES_POINT`、`USES_AIRWAY`、`USES_PROCEDURE`。
+- 不生成 `ROUTE_EDGE`。
 - 不生成旧版路径搜索投影文件。
+- 路径搜索不是当前能力。
 - 不做实时天气、NOTAM、航班、飞机、机组等外部动态数据。
 
 模型说明见 [docs/data_model.md](docs/data_model.md)。
@@ -22,6 +25,12 @@ python --version
 ```
 
 清洗脚本只使用 Python 标准库。
+
+Neo4j 入库脚本需要安装依赖：
+
+```powershell
+pip install -r requirements.txt
+```
 
 ## 必需源表
 
@@ -131,6 +140,32 @@ navaid_ambiguous_references_for_review.csv
 ```
 
 Navaid 审计文件只提供机械分析标签与人工审核辅助字段，不输出 `should_merge` / `should_split` 之类的自动建模判断。
+
+## 导入 Neo4j 源事实层
+
+先生成 `data/clean/`，再执行：
+
+```powershell
+python .\scripts\import_to_neo4j.py `
+  --clean-dir .\data\clean `
+  --uri bolt://localhost:7687 `
+  --user neo4j `
+  --password <password> `
+  --database neo4j
+```
+
+默认参数：
+
+```text
+--clean-dir data/clean
+--uri bolt://localhost:7687
+--user neo4j
+--database neo4j
+```
+
+密码必须通过 `--password` 传入，或设置环境变量 `NEO4J_PASSWORD`。脚本默认会先清空当前数据库中的节点和关系，然后创建唯一约束、导入节点、导入关系，并按 CSV 行数做 count 校验。
+
+当前 Neo4j 导入仍不生成 `TRAVERSE_TO` / `USES_*` / `ROUTE_EDGE`。路径搜索不是当前能力。
 
 ## 测试
 
