@@ -1,0 +1,2 @@
+sourceTable,sourceRowId,sourceObjectKey,rawValue,rawNavType,contextStateCode,contextCountryCode,contextIcaoRegionCode,candidateCountByNavIdType,candidatePointKeys,candidateSourceRowIds,currentResolvedPointKey,currentResolveStatus,ambiguityReason
+STAR_RTE,13883,PROC_OCC:PROC_PATH:PROCEDURE:STAR:SETER.SETER5:BODY:SETER-SB:1::10,SB,NDB,,,,2,POINT:NAVAID:SB:NDB:US:CA:SAN_BERNARDINO|POINT:NAVAID:SB:NDB:US:IN:SOUTH_BEND,1327|1328,,unresolved,ambiguous_navaid_reference

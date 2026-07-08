@@ -147,6 +147,7 @@ class CleanGraphDataV1Tests(unittest.TestCase):
                     "DP_COMPUTER_CODE", "ROUTE_PORTION_TYPE", "ROUTE_NAME",
                     "BODY_SEQ", "TRANSITION_COMPUTER_CODE", "POINT_SEQ",
                     "POINT", "POINT_TYPE", "NEXT_POINT", "ARPT_RWY_ASSOC",
+                    "DP_NAME", "ARTCC", "AMENDMENT_NO",
                 ],
                 [
                     {
@@ -163,6 +164,16 @@ class CleanGraphDataV1Tests(unittest.TestCase):
                         "ROUTE_NAME": "BODY", "BODY_SEQ": "1",
                         "TRANSITION_COMPUTER_CODE": "T1",
                         "POINT_SEQ": "2", "POINT": "AA",
+                        "POINT_TYPE": "NDB",
+                    },
+                    {
+                        "DP_COMPUTER_CODE": "NOT ASSIGNED",
+                        "DP_NAME": "Manual", "ARTCC": "ZAA",
+                        "AMENDMENT_NO": "1",
+                        "ROUTE_PORTION_TYPE": "COMMON",
+                        "ROUTE_NAME": "MANUAL", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "T1",
+                        "POINT_SEQ": "1", "POINT": "AA",
                         "POINT_TYPE": "NDB",
                     },
                 ],
@@ -366,6 +377,38 @@ class CleanGraphDataV1Tests(unittest.TestCase):
             self.assertIn(
                 "ambiguous_navaid_reference",
                 {row["ambiguityReason"] for row in navaid_refs},
+            )
+            not_assigned_ref = next(
+                row for row in navaid_refs
+                if row["sourceTable"] == "DP_RTE"
+                and "NOT_ASSIGNED" in row["sourceObjectKey"]
+            )
+            self.assertIn(
+                "PROCEDURE:DP:NOT_ASSIGNED:MANUAL:ZAA:1",
+                not_assigned_ref["sourceObjectKey"],
+            )
+
+            duplicate_review = read_csv(
+                audit / "navaid_duplicate_groups_for_review.csv"
+            )
+            self.assertEqual(len(duplicate_review), 1)
+            self.assertEqual(duplicate_review[0]["groupSize"], "2")
+            self.assertEqual(duplicate_review[0]["nameConflict"], "true")
+            self.assertEqual(
+                duplicate_review[0]["referencedInAnyRouteData"], "true"
+            )
+            self.assertNotIn("should_merge", duplicate_review[0])
+            self.assertNotIn("should_split", duplicate_review[0])
+
+            ambiguous_review = read_csv(
+                audit / "navaid_ambiguous_references_for_review.csv"
+            )
+            self.assertEqual(len(ambiguous_review), 4)
+            self.assertTrue(
+                all(
+                    row["ambiguityReason"] == "ambiguous_navaid_reference"
+                    for row in ambiguous_review
+                )
             )
 
             sequence_issues = read_csv(audit / "audit_sequence_issues.csv")

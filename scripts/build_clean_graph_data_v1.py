@@ -174,6 +174,11 @@ NAVAID_REFERENCE_AMBIGUITY_COLUMNS = (
     "currentResolveStatus", "ambiguityReason",
 )
 
+NAVAID_DUPLICATE_GROUP_REVIEW_COLUMNS = NAVAID_GROUP_ANALYSIS_COLUMNS + (
+    "nameConflict", "cityConflict", "stateConflict", "countryConflict",
+    "freqConflict", "coordConflict", "referencedInAnyRouteData",
+)
+
 
 def clean(value):
     value = str(value or "").strip()
@@ -366,16 +371,28 @@ def navaid_group_pattern(rows):
     return "insufficient_fields"
 
 
-def source_object_key_for_reference(table, row):
+def procedure_key_for_rte_row(proc_type, row, procedure_lookup):
+    if proc_type == "DP":
+        code = key_part(row.get("DP_COMPUTER_CODE"))
+        name = key_part(row.get("DP_NAME"))
+        artcc = key_part(row.get("ARTCC"))
+        return procedure_lookup.get(
+            (proc_type, code, name, artcc), f"PROCEDURE:DP:{code}"
+        )
+    return f"PROCEDURE:STAR:{key_part(row.get('STAR_COMPUTER_CODE'))}"
+
+
+def source_object_key_for_reference(table, row, procedure_lookup=None):
+    procedure_lookup = procedure_lookup or {}
     if table == "AWY_SEG_ALT":
         return airway_occurrence_key(
             row.get("AWY_ID"), row.get("AWY_LOCATION"), row.get("POINT_SEQ")
         )
     if table == "DP_RTE":
-        proc_key = f"PROCEDURE:DP:{key_part(row.get('DP_COMPUTER_CODE'))}"
+        proc_key = procedure_key_for_rte_row("DP", row, procedure_lookup)
         return procedure_occurrence_key(procedure_path_key(proc_key, row), row.get("POINT_SEQ"))
     if table == "STAR_RTE":
-        proc_key = f"PROCEDURE:STAR:{key_part(row.get('STAR_COMPUTER_CODE'))}"
+        proc_key = procedure_key_for_rte_row("STAR", row, procedure_lookup)
         return procedure_occurrence_key(procedure_path_key(proc_key, row), row.get("POINT_SEQ"))
     if table == "PFR_SEG":
         return template_token_key(pfr_template_key(row), row.get("SEGMENT_SEQ"))
@@ -847,6 +864,24 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         })
     indexes = build_route_point_indexes(route_points)
 
+    reference_procedure_lookup = {}
+    for row in dp_base:
+        key = procedure_key("DP", row.get("DP_COMPUTER_CODE"), row)
+        reference_procedure_lookup[
+            (
+                "DP", key_part(row.get("DP_COMPUTER_CODE")),
+                key_part(row.get("DP_NAME")), key_part(row.get("ARTCC")),
+            )
+        ] = key
+    for row in star_base:
+        key = procedure_key("STAR", row.get("STAR_COMPUTER_CODE"), row)
+        reference_procedure_lookup[
+            (
+                "STAR", key_part(row.get("STAR_COMPUTER_CODE")),
+                "", key_part(row.get("ARTCC")),
+            )
+        ] = key
+
     navaid_groups = defaultdict(list)
     for row in nav_base:
         navaid_groups[(key_part(row.get("NAV_ID")), key_part(row.get("NAV_TYPE")))].append(row)
@@ -904,6 +939,27 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
             "appearsInPfrSegCount": navaid_reference_counts["PFR_SEG"][(nav_id, nav_type)],
             "preliminaryPattern": navaid_group_pattern(rows),
         })
+    navaid_duplicate_groups_for_review = []
+    for row in navaid_group_analysis:
+        if int(row["groupSize"]) <= 1:
+            continue
+        referenced = any(
+            int(row[field]) > 0
+            for field in (
+                "appearsInAwySegCount", "appearsInDpRteCount",
+                "appearsInStarRteCount", "appearsInPfrSegCount",
+            )
+        )
+        navaid_duplicate_groups_for_review.append({
+            **row,
+            "nameConflict": str(int(row["distinctNameCount"]) > 1).lower(),
+            "cityConflict": str(int(row["distinctCityCount"]) > 1).lower(),
+            "stateConflict": str(int(row["distinctStateCount"]) > 1).lower(),
+            "countryConflict": str(int(row["distinctCountryCount"]) > 1).lower(),
+            "freqConflict": str(int(row["distinctFreqCount"]) > 1).lower(),
+            "coordConflict": str(len(row["latLonList"].split("|")) > 1).lower(),
+            "referencedInAnyRouteData": str(referenced).lower(),
+        })
 
     navaid_group_detail = []
     navaid_source_rows_by_point = {}
@@ -951,7 +1007,9 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         navaid_reference_ambiguity.append({
             "sourceTable": table,
             "sourceRowId": row.get("_sourceRowId", ""),
-            "sourceObjectKey": source_object_key_for_reference(table, row),
+            "sourceObjectKey": source_object_key_for_reference(
+                table, row, reference_procedure_lookup
+            ),
             "rawValue": row.get(raw_col, ""),
             "rawNavType": row.get(type_col, ""),
             "contextStateCode": row.get("STATE_CODE", ""),
@@ -967,6 +1025,10 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
             "currentResolveStatus": status,
             "ambiguityReason": reason,
         })
+    navaid_ambiguous_references_for_review = [
+        row for row in navaid_reference_ambiguity
+        if row["ambiguityReason"] == "ambiguous_navaid_reference"
+    ]
 
     awy_by_id = defaultdict(list)
     for row in awy_base:
@@ -1127,12 +1189,7 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         })
 
     def procedure_key_for_rte(proc_type, row):
-        if proc_type == "DP":
-            code = key_part(row.get("DP_COMPUTER_CODE"))
-            name = key_part(row.get("DP_NAME"))
-            artcc = key_part(row.get("ARTCC"))
-            return procedure_lookup.get((proc_type, code, name, artcc), f"PROCEDURE:DP:{code}")
-        return f"PROCEDURE:STAR:{key_part(row.get('STAR_COMPUTER_CODE'))}"
+        return procedure_key_for_rte_row(proc_type, row, procedure_lookup)
 
     procedure_paths_by_key = {}
     procedure_path_source_rows = defaultdict(list)
@@ -1493,6 +1550,16 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         NAVAID_REFERENCE_AMBIGUITY_COLUMNS,
         navaid_reference_ambiguity,
     )
+    write_csv(
+        audit_dir / "navaid_duplicate_groups_for_review.csv",
+        NAVAID_DUPLICATE_GROUP_REVIEW_COLUMNS,
+        navaid_duplicate_groups_for_review,
+    )
+    write_csv(
+        audit_dir / "navaid_ambiguous_references_for_review.csv",
+        NAVAID_REFERENCE_AMBIGUITY_COLUMNS,
+        navaid_ambiguous_references_for_review,
+    )
 
     report = {
         "airport_rows": len(airports),
@@ -1515,6 +1582,8 @@ def build_clean_graph_data_v1(input_dir, clean_dir, audit_dir):
         "navaid_entity_group_analysis_rows": len(navaid_group_analysis),
         "navaid_entity_group_detail_rows": len(navaid_group_detail),
         "navaid_reference_ambiguity_analysis_rows": len(navaid_reference_ambiguity),
+        "navaid_duplicate_groups_for_review_rows": len(navaid_duplicate_groups_for_review),
+        "navaid_ambiguous_references_for_review_rows": len(navaid_ambiguous_references_for_review),
         "old_projection_files_generated": 0,
     }
     write_csv(

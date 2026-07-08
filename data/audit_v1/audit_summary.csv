@@ -4,6 +4,8 @@ airway_occurrence_rows,19318
 airway_path_rows,1519
 airway_rows,1469
 duplicate_key_audit_rows,88
+navaid_ambiguous_references_for_review_rows,1
+navaid_duplicate_groups_for_review_rows,36
 navaid_entity_group_analysis_rows,1590
 navaid_entity_group_detail_rows,1634
 navaid_reference_ambiguity_analysis_rows,25409
