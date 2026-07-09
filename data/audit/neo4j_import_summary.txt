@@ -1,0 +1,26 @@
+﻿python.exe : Traceback (most recent call last):
+At line:13 char:1
++ & python .\scripts\import_to_neo4j.py --clean-dir .\data\clean --uri  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 347, in <module>
+    main()
+  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 333, in main
+    node_counts, rel_counts = load_clean_graph(
+                              ^^^^^^^^^^^^^^^^^
+  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 288, in load_clean_graph
+    node_actual, rel_actual = validate_counts(session, node_expected, rel_expected)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 273, in validate_counts
+    raise RuntimeError(
+RuntimeError: Relationship count mismatch for rel_procedure_serves_airport.csv (SERVES_AIRPORT): expected 9769, actual 
+9766
+
+Diagnostic: missing relationship endpoints in clean data
+rel_procedure_serves_airport.csv expected 9769, actual 9766
+Missing fromKey rows:
+sourceRowId=5860 fromKey=PROCEDURE:DP:NOT_ASSIGNED toKey=AIRPORT:ANC
+sourceRowId=6060 fromKey=PROCEDURE:DP:NOT_ASSIGNED toKey=AIRPORT:WHP
+sourceRowId=6061 fromKey=PROCEDURE:DP:NOT_ASSIGNED toKey=AIRPORT:WHP

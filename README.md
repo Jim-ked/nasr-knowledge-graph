@@ -167,6 +167,35 @@ python .\scripts\import_to_neo4j.py `
 
 当前 Neo4j 导入仍不生成 `TRAVERSE_TO` / `USES_*` / `ROUTE_EDGE`。路径搜索不是当前能力。
 
+### 本地试导入
+
+可以把密码放在当前 PowerShell 进程环境变量中，避免写入代码或提交：
+
+```powershell
+$env:NEO4J_PASSWORD = "<password>"
+
+python .\scripts\import_to_neo4j.py `
+  --clean-dir .\data\clean `
+  --uri bolt://localhost:7687 `
+  --user neo4j `
+  --database neo4j
+```
+
+脚本默认会清空目标数据库中的所有节点和关系；请只对测试库或确认可清空的库执行。
+
+### 抽样检查 Neo4j v1 源事实层
+
+导入后可执行：
+
+```powershell
+python .\scripts\check_neo4j_v1.py `
+  --uri bolt://localhost:7687 `
+  --user neo4j `
+  --database neo4j
+```
+
+`check_neo4j_v1.py` 只做源事实层结构检查：输出节点 label 数量、关系类型数量、关键对象孤立检查、未解析 occurrence 数量，以及少量 AirwayPath / ProcedurePath / RouteTemplate 抽样。它不做路径搜索，也不生成任何派生搜索边。
+
 ## 测试
 
 ```powershell
