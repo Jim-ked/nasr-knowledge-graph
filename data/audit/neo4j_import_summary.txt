@@ -1,26 +1,36 @@
-﻿python.exe : Traceback (most recent call last):
-At line:13 char:1
-+ & python .\scripts\import_to_neo4j.py --clean-dir .\data\clean --uri  ...
-+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 347, in <module>
-    main()
-  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 333, in main
-    node_counts, rel_counts = load_clean_graph(
-                              ^^^^^^^^^^^^^^^^^
-  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 288, in load_clean_graph
-    node_actual, rel_actual = validate_counts(session, node_expected, rel_expected)
-                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "D:\Data\��Ŀ����\֪ʶͼ��test\scripts\import_to_neo4j.py", line 273, in validate_counts
-    raise RuntimeError(
-RuntimeError: Relationship count mismatch for rel_procedure_serves_airport.csv (SERVES_AIRPORT): expected 9769, actual 
-9766
-
-Diagnostic: missing relationship endpoints in clean data
-rel_procedure_serves_airport.csv expected 9769, actual 9766
-Missing fromKey rows:
-sourceRowId=5860 fromKey=PROCEDURE:DP:NOT_ASSIGNED toKey=AIRPORT:ANC
-sourceRowId=6060 fromKey=PROCEDURE:DP:NOT_ASSIGNED toKey=AIRPORT:WHP
-sourceRowId=6061 fromKey=PROCEDURE:DP:NOT_ASSIGNED toKey=AIRPORT:WHP
+﻿Database: neo4j
+Clean dir: data\clean
+Nodes:
+  Airport: 19407
+  Airway: 1469
+  AirwayPath: 1519
+  AirwayPointOccurrence: 19318
+  Procedure: 1878
+  ProcedurePath: 7434
+  ProcedurePointOccurrence: 29748
+  RoutePoint: 71650
+  RouteTemplate: 54521
+  Runway: 23185
+  RunwayEnd: 39876
+  TemplatePath: 13309
+  TemplateTokenOccurrence: 74182
+Relationships:
+  rel_airport_has_runway.csv (HAS_RUNWAY): 23165
+  rel_airway_has_path.csv (HAS_PATH): 1519
+  rel_airway_occurrence_resolves_to.csv (RESOLVES_TO): 19318
+  rel_airway_path_has_occurrence.csv (HAS_OCCURRENCE): 19318
+  rel_next_on_airway.csv (NEXT_ON_AIRWAY): 17799
+  rel_next_on_procedure.csv (NEXT_ON_PROCEDURE): 22314
+  rel_next_template_token.csv (NEXT_TEMPLATE_TOKEN): 61443
+  rel_procedure_has_path.csv (HAS_PATH): 7434
+  rel_procedure_occurrence_resolves_to.csv (RESOLVES_TO): 29747
+  rel_procedure_path_associated_with_runway_end.csv (ASSOCIATED_WITH_RUNWAY_END): 8027
+  rel_procedure_path_has_occurrence.csv (HAS_OCCURRENCE): 29748
+  rel_procedure_serves_airport.csv (SERVES_AIRPORT): 9769
+  rel_runway_has_runway_end.csv (HAS_RUNWAY_END): 39876
+  rel_template_destination_ref.csv (DESTINATION_REF): 12966
+  rel_template_has_path.csv (HAS_PATH): 13309
+  rel_template_origin_ref.csv (ORIGIN_REF): 12463
+  rel_template_path_has_occurrence.csv (HAS_OCCURRENCE): 74182
+  rel_template_token_references.csv (REFERENCES): 73924
+Count validation: passed

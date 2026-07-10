@@ -484,6 +484,148 @@ class CleanGraphDataTests(unittest.TestCase):
             ):
                 build_clean_graph_data(raw, root / "clean", root / "audit")
 
+    def test_not_assigned_dp_airport_links_use_expanded_procedure_keys(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = root / "raw"
+            clean = root / "clean"
+            audit = root / "audit"
+            raw.mkdir()
+
+            write_csv(
+                raw / "APT_BASE.csv",
+                ["ARPT_ID", "ARPT_NAME"],
+                [{"ARPT_ID": "ANC", "ARPT_NAME": "Anchorage"}],
+            )
+            write_csv(
+                raw / "APT_RWY.csv",
+                ["ARPT_ID", "RWY_ID"],
+                [{"ARPT_ID": "ANC", "RWY_ID": "07/25"}],
+            )
+            write_csv(
+                raw / "APT_RWY_END.csv",
+                ["ARPT_ID", "RWY_ID", "RWY_END_ID"],
+                [{"ARPT_ID": "ANC", "RWY_ID": "07/25", "RWY_END_ID": "07"}],
+            )
+            write_csv(raw / "FIX_BASE.csv", ["FIX_ID", "ICAO_REGION_CODE"], [])
+            write_csv(raw / "NAV_BASE.csv", ["NAV_ID", "NAV_TYPE"], [])
+            write_csv(raw / "AWY_BASE.csv", ["AWY_ID", "AWY_LOCATION"], [])
+            write_csv(
+                raw / "AWY_SEG_ALT.csv",
+                [
+                    "AWY_ID", "AWY_LOCATION", "POINT_SEQ", "FROM_POINT",
+                    "FROM_PT_TYPE", "TO_POINT",
+                ],
+                [],
+            )
+            write_csv(
+                raw / "DP_BASE.csv",
+                [
+                    "DP_COMPUTER_CODE", "DP_NAME", "ARTCC", "AMENDMENT_NO",
+                    "SERVED_ARPT",
+                ],
+                [
+                    {
+                        "DP_COMPUTER_CODE": "NOT ASSIGNED",
+                        "DP_NAME": "LUNDI", "ARTCC": "ZAN",
+                        "AMENDMENT_NO": "1", "SERVED_ARPT": "ANC",
+                    }
+                ],
+            )
+            write_csv(
+                raw / "DP_RTE.csv",
+                [
+                    "DP_COMPUTER_CODE", "ROUTE_PORTION_TYPE", "ROUTE_NAME",
+                    "BODY_SEQ", "TRANSITION_COMPUTER_CODE", "POINT_SEQ",
+                    "POINT", "POINT_TYPE", "NEXT_POINT", "DP_NAME",
+                    "ARTCC", "AMENDMENT_NO",
+                ],
+                [
+                    {
+                        "DP_COMPUTER_CODE": "NOT ASSIGNED",
+                        "ROUTE_PORTION_TYPE": "COMMON",
+                        "ROUTE_NAME": "LUNDI", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "",
+                        "POINT_SEQ": "1", "POINT": "MISSING",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "",
+                        "DP_NAME": "LUNDI", "ARTCC": "ZAN",
+                        "AMENDMENT_NO": "1",
+                    }
+                ],
+            )
+            write_csv(
+                raw / "DP_APT.csv",
+                [
+                    "DP_COMPUTER_CODE", "BODY_NAME", "BODY_SEQ", "ARPT_ID",
+                    "RWY_END_ID",
+                ],
+                [
+                    {
+                        "DP_COMPUTER_CODE": "NOT ASSIGNED",
+                        "BODY_NAME": "LUNDI", "BODY_SEQ": "1",
+                        "ARPT_ID": "ANC", "RWY_END_ID": "07",
+                    }
+                ],
+            )
+            write_csv(raw / "STAR_BASE.csv", ["STAR_COMPUTER_CODE"], [])
+            write_csv(
+                raw / "STAR_RTE.csv",
+                [
+                    "STAR_COMPUTER_CODE", "ROUTE_PORTION_TYPE", "ROUTE_NAME",
+                    "BODY_SEQ", "TRANSITION_COMPUTER_CODE", "POINT_SEQ",
+                    "POINT", "POINT_TYPE", "NEXT_POINT",
+                ],
+                [],
+            )
+            write_csv(
+                raw / "STAR_APT.csv",
+                [
+                    "STAR_COMPUTER_CODE", "BODY_NAME", "BODY_SEQ", "ARPT_ID",
+                    "RWY_END_ID",
+                ],
+                [],
+            )
+            write_csv(
+                raw / "PFR_BASE.csv",
+                ["ORIGIN_ID", "DSTN_ID", "PFR_TYPE_CODE", "ROUTE_NO"],
+                [],
+            )
+            write_csv(
+                raw / "PFR_SEG.csv",
+                [
+                    "ORIGIN_ID", "DSTN_ID", "PFR_TYPE_CODE", "ROUTE_NO",
+                    "SEGMENT_SEQ", "SEG_VALUE", "SEG_TYPE",
+                ],
+                [],
+            )
+            write_csv(raw / "CDR.csv", ["RCode"], [])
+
+            build_clean_graph_data(raw, clean, audit)
+
+            procedures = read_csv(clean / "clean_procedures.csv")
+            procedure_keys = {row["procedureKey"] for row in procedures}
+            procedure_paths = read_csv(clean / "clean_procedure_paths.csv")
+            procedure_path_keys = {
+                row["procedurePathKey"] for row in procedure_paths
+            }
+            serves_airport = read_csv(clean / "rel_procedure_serves_airport.csv")
+            runway_links = read_csv(
+                clean / "rel_procedure_path_associated_with_runway_end.csv"
+            )
+
+            self.assertNotIn(
+                "PROCEDURE:DP:NOT_ASSIGNED",
+                {row["fromKey"] for row in serves_airport},
+            )
+            self.assertTrue(
+                all(row["fromKey"] in procedure_keys for row in serves_airport)
+            )
+            self.assertTrue(
+                all(row["fromKey"] in procedure_path_keys for row in runway_links)
+            )
+            self.assertEqual(len(serves_airport), 1)
+            self.assertEqual(len(runway_links), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

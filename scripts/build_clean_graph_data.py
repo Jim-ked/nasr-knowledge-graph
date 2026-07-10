@@ -1371,35 +1371,68 @@ def build_clean_graph_data(input_dir, clean_dir, audit_dir):
 
     rel_procedure_serves_airport = []
     rel_procedure_path_associated_with_runway_end = []
+
+    def procedure_path_matches_for_airport_link(proc_type, row, code_field):
+        code = key_part(row.get(code_field))
+        body_seq = key_part(row.get("BODY_SEQ"))
+        body_name = key_part(row.get("BODY_NAME"))
+        if proc_type == "DP" and code == "NOT_ASSIGNED":
+            expected_proc_key = "PROCEDURE:DP:NOT_ASSIGNED:"
+        else:
+            expected_proc_key = f"PROCEDURE:{proc_type}:{code}"
+
+        matches = []
+        for path in procedure_paths:
+            if path["procedureType"] != proc_type:
+                continue
+            if key_part(path["bodySeq"]) != body_seq:
+                continue
+            if key_part(path["routeName"]) != body_name:
+                continue
+            path_proc_key = path["procedureKey"]
+            if proc_type == "DP" and code == "NOT_ASSIGNED":
+                if path_proc_key.startswith(expected_proc_key):
+                    matches.append(path)
+            elif path_proc_key == expected_proc_key:
+                matches.append(path)
+        return matches
+
     for proc_type, rows, table, code_field in (
         ("DP", dp_apt, "DP_APT", "DP_COMPUTER_CODE"),
         ("STAR", star_apt, "STAR_APT", "STAR_COMPUTER_CODE"),
     ):
         for row in rows:
-            if proc_type == "DP":
-                proc_key = f"PROCEDURE:DP:{key_part(row.get(code_field))}"
-            else:
-                proc_key = f"PROCEDURE:STAR:{key_part(row.get(code_field))}"
+            original_proc_key = f"PROCEDURE:{proc_type}:{key_part(row.get(code_field))}"
+            path_matches = procedure_path_matches_for_airport_link(
+                proc_type, row, code_field
+            )
+            if len(path_matches) != 1:
+                unresolved(
+                    unresolved_rows,
+                    table,
+                    row,
+                    original_proc_key,
+                    row.get("BODY_NAME"),
+                    "procedure",
+                    "unresolved",
+                    "missing_or_ambiguous_procedure_path_for_airport_link",
+                )
+                continue
+
+            path = path_matches[0]
+            proc_key = path["procedureKey"]
             arpt_key = airport_key(row.get("ARPT_ID"))
             if arpt_key in airport_map:
                 rel_procedure_serves_airport.append(
                     base_rel(proc_key, arpt_key, table, row)
                 )
-            route_name = row.get("BODY_NAME")
-            path_matches = [
-                path for path in procedure_paths
-                if path["procedureKey"] == proc_key
-                and key_part(path["bodySeq"]) == key_part(row.get("BODY_SEQ"))
-                and key_part(path["routeName"]) == key_part(route_name)
-            ]
             runway_end = runway_end_by_arpt_end.get(
                 (key_part(row.get("ARPT_ID")), key_part(row.get("RWY_END_ID")))
             )
             if runway_end:
-                for path in path_matches:
-                    rel_procedure_path_associated_with_runway_end.append(
-                        base_rel(path["procedurePathKey"], runway_end, table, row)
-                    )
+                rel_procedure_path_associated_with_runway_end.append(
+                    base_rel(path["procedurePathKey"], runway_end, table, row)
+                )
 
     route_templates = []
     template_paths = []
