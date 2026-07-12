@@ -626,6 +626,175 @@ class CleanGraphDataTests(unittest.TestCase):
             self.assertEqual(len(serves_airport), 1)
             self.assertEqual(len(runway_links), 1)
 
+    def test_next_on_procedure_uses_operational_direction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = root / "raw"
+            clean = root / "clean"
+            audit = root / "audit"
+            raw.mkdir()
+
+            write_csv(raw / "APT_BASE.csv", ["ARPT_ID"], [])
+            write_csv(raw / "APT_RWY.csv", ["ARPT_ID", "RWY_ID"], [])
+            write_csv(
+                raw / "APT_RWY_END.csv",
+                ["ARPT_ID", "RWY_ID", "RWY_END_ID"],
+                [],
+            )
+            write_csv(raw / "FIX_BASE.csv", ["FIX_ID", "ICAO_REGION_CODE"], [])
+            write_csv(raw / "NAV_BASE.csv", ["NAV_ID", "NAV_TYPE"], [])
+            write_csv(raw / "AWY_BASE.csv", ["AWY_ID", "AWY_LOCATION"], [])
+            write_csv(
+                raw / "AWY_SEG_ALT.csv",
+                [
+                    "AWY_ID", "AWY_LOCATION", "POINT_SEQ", "FROM_POINT",
+                    "FROM_PT_TYPE", "TO_POINT",
+                ],
+                [],
+            )
+            write_csv(
+                raw / "DP_BASE.csv",
+                ["DP_COMPUTER_CODE", "DP_NAME"],
+                [{"DP_COMPUTER_CODE": "ADYOS3.ADYOS", "DP_NAME": "ADYOS"}],
+            )
+            write_csv(
+                raw / "DP_RTE.csv",
+                [
+                    "DP_COMPUTER_CODE", "ROUTE_PORTION_TYPE", "ROUTE_NAME",
+                    "BODY_SEQ", "TRANSITION_COMPUTER_CODE", "POINT_SEQ",
+                    "POINT", "POINT_TYPE", "NEXT_POINT",
+                ],
+                [
+                    {
+                        "DP_COMPUTER_CODE": "ADYOS3.ADYOS",
+                        "ROUTE_PORTION_TYPE": "BODY",
+                        "ROUTE_NAME": "ABQ-ADYOS", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "",
+                        "POINT_SEQ": "10", "POINT": "ADYOS",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "ABQ",
+                    },
+                    {
+                        "DP_COMPUTER_CODE": "ADYOS3.ADYOS",
+                        "ROUTE_PORTION_TYPE": "BODY",
+                        "ROUTE_NAME": "ABQ-ADYOS", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "",
+                        "POINT_SEQ": "20", "POINT": "ABQ",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "",
+                    },
+                ],
+            )
+            write_csv(
+                raw / "DP_APT.csv",
+                [
+                    "DP_COMPUTER_CODE", "BODY_NAME", "BODY_SEQ", "ARPT_ID",
+                    "RWY_END_ID",
+                ],
+                [],
+            )
+            write_csv(
+                raw / "STAR_BASE.csv",
+                ["STAR_COMPUTER_CODE", "ARRIVAL_NAME"],
+                [{"STAR_COMPUTER_CODE": "AALAN.BLAID2", "ARRIVAL_NAME": "BLAID"}],
+            )
+            write_csv(
+                raw / "STAR_RTE.csv",
+                [
+                    "STAR_COMPUTER_CODE", "ROUTE_PORTION_TYPE", "ROUTE_NAME",
+                    "BODY_SEQ", "TRANSITION_COMPUTER_CODE", "POINT_SEQ",
+                    "POINT", "POINT_TYPE", "NEXT_POINT",
+                ],
+                [
+                    {
+                        "STAR_COMPUTER_CODE": "AALAN.BLAID2",
+                        "ROUTE_PORTION_TYPE": "TRANSITION",
+                        "ROUTE_NAME": "AALAN TRANSITION", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "AALAN.BLAID2",
+                        "POINT_SEQ": "10", "POINT": "AALAN",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "HOLDM",
+                    },
+                    {
+                        "STAR_COMPUTER_CODE": "AALAN.BLAID2",
+                        "ROUTE_PORTION_TYPE": "TRANSITION",
+                        "ROUTE_NAME": "AALAN TRANSITION", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "AALAN.BLAID2",
+                        "POINT_SEQ": "20", "POINT": "HOLDM",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "BCE",
+                    },
+                    {
+                        "STAR_COMPUTER_CODE": "AALAN.BLAID2",
+                        "ROUTE_PORTION_TYPE": "TRANSITION",
+                        "ROUTE_NAME": "AALAN TRANSITION", "BODY_SEQ": "1",
+                        "TRANSITION_COMPUTER_CODE": "AALAN.BLAID2",
+                        "POINT_SEQ": "30", "POINT": "BCE",
+                        "POINT_TYPE": "FIX", "NEXT_POINT": "",
+                    },
+                ],
+            )
+            write_csv(
+                raw / "STAR_APT.csv",
+                [
+                    "STAR_COMPUTER_CODE", "BODY_NAME", "BODY_SEQ", "ARPT_ID",
+                    "RWY_END_ID",
+                ],
+                [],
+            )
+            write_csv(
+                raw / "PFR_BASE.csv",
+                ["ORIGIN_ID", "DSTN_ID", "PFR_TYPE_CODE", "ROUTE_NO"],
+                [],
+            )
+            write_csv(
+                raw / "PFR_SEG.csv",
+                [
+                    "ORIGIN_ID", "DSTN_ID", "PFR_TYPE_CODE", "ROUTE_NO",
+                    "SEGMENT_SEQ", "SEG_VALUE", "SEG_TYPE",
+                ],
+                [],
+            )
+            write_csv(raw / "CDR.csv", ["RCode"], [])
+
+            build_clean_graph_data(raw, clean, audit)
+
+            occurrences = read_csv(clean / "clean_procedure_occurrences.csv")
+            occurrence_keys = {row["procedureOccurrenceKey"] for row in occurrences}
+            occurrence_by_point = {
+                (row["procedureType"], row["rawPoint"]): row["procedureOccurrenceKey"]
+                for row in occurrences
+            }
+            paths = read_csv(clean / "clean_procedure_paths.csv")
+            next_rows = read_csv(clean / "rel_next_on_procedure.csv")
+            next_pairs = {(row["fromKey"], row["toKey"]) for row in next_rows}
+
+            dp_adyos = occurrence_by_point[("DP", "ADYOS")]
+            dp_abq = occurrence_by_point[("DP", "ABQ")]
+            self.assertIn((dp_abq, dp_adyos), next_pairs)
+            self.assertNotIn((dp_adyos, dp_abq), next_pairs)
+
+            star_aalan = occurrence_by_point[("STAR", "AALAN")]
+            star_holdm = occurrence_by_point[("STAR", "HOLDM")]
+            star_bce = occurrence_by_point[("STAR", "BCE")]
+            self.assertIn((star_bce, star_holdm), next_pairs)
+            self.assertIn((star_holdm, star_aalan), next_pairs)
+            self.assertNotIn((star_aalan, star_holdm), next_pairs)
+            self.assertNotIn((star_holdm, star_bce), next_pairs)
+
+            self.assertEqual(len(next_rows), len(occurrences) - len(paths))
+            self.assertTrue(
+                all(
+                    row["fromKey"] in occurrence_keys
+                    and row["toKey"] in occurrence_keys
+                    for row in next_rows
+                )
+            )
+            self.assertTrue(
+                all(
+                    row["directionStatus"] == "reversed_source_sequence"
+                    for row in next_rows
+                )
+            )
+            self.assertIn("sourceOrderNextPointRaw", next_rows[0])
+            self.assertNotIn("sourceNextPointRaw", next_rows[0])
+
 
 if __name__ == "__main__":
     unittest.main()

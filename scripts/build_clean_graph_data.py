@@ -124,7 +124,7 @@ NEXT_AIRWAY_COLUMNS = (
 )
 
 NEXT_PROCEDURE_COLUMNS = (
-    "fromKey", "toKey", "sourceNextPointRaw", "sequenceCheckStatus",
+    "fromKey", "toKey", "sourceOrderNextPointRaw", "sequenceCheckStatus",
     "directionStatus", "sourceCycle", "sourceTable", "sourceRowId",
 )
 
@@ -1348,11 +1348,11 @@ def build_clean_graph_data(input_dir, clean_dir, audit_dir):
         for current, nxt in zip(ordered, ordered[1:]):
             row = current["_row"]
             rel_next_on_procedure.append({
-                "fromKey": current["procedureOccurrenceKey"],
-                "toKey": nxt["procedureOccurrenceKey"],
-                "sourceNextPointRaw": row.get("NEXT_POINT", ""),
+                "fromKey": nxt["procedureOccurrenceKey"],
+                "toKey": current["procedureOccurrenceKey"],
+                "sourceOrderNextPointRaw": row.get("NEXT_POINT", ""),
                 "sequenceCheckStatus": "ordered_by_point_seq",
-                "directionStatus": "source_sequence",
+                "directionStatus": "reversed_source_sequence",
                 **source_props(current["_table"], row),
             })
         if items:

@@ -87,7 +87,18 @@ sourceRowIds
 sourceRowCount
 ```
 
-程序方向只按源表序列保留，不在 v1.0 中进入路径搜索层。
+`ProcedurePointOccurrence` 节点中的 `pointSeq`、`nextPointRaw`、`sourceTable`、`sourceRowId`
+继续忠实保留 `DP_RTE` / `STAR_RTE` 的源表记录顺序。
+
+`NEXT_ON_PROCEDURE` 表示程序实际运行方向上的下一点。当前 v1.0 已确认
+`DP_RTE` / `STAR_RTE` 的 `POINT_SEQ` 与 `NEXT_POINT` 在典型 DP/STAR 样例中是源表记录顺序，
+与实际飞行方向相反，因此生成 `NEXT_ON_PROCEDURE` 时会反转同一 `ProcedurePath`
+内按 `POINT_SEQ` 排序后的源表顺序。
+
+`rel_next_on_procedure.csv` 中的 `sourceOrderNextPointRaw` 表示 NASR 源表当前行的
+`NEXT_POINT` 原值，不表示该关系边方向上的下一点。
+
+v1.0 仍不提供机场间路径搜索主流程。
 
 ## 模板源事实层
 
