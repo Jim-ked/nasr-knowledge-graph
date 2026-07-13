@@ -1,0 +1,10 @@
+metric,value
+next_on_airway_rows,17799
+resolved_endpoint_rows,17799
+opposite_mag_course_rows,17466
+opposite_min_enroute_alt_rows,785
+no_opposite_field_rows,333
+gap_flag_rows,17799
+signal_gap_flag_rows,17799
+dogleg_rows,17799
+unresolved_endpoint_rows,0

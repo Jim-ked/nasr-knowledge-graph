@@ -1,0 +1,7 @@
+metric,value
+procedures_with_body_and_transition,1241
+procedures_with_any_matched_join,1241
+procedures_with_no_matched_join,0
+dp_matched_join_rows,3212
+star_matched_join_rows,5067
+endpoint_unresolved_join_rows,0
