@@ -1,0 +1,2 @@
+procedureKey,procedureType,procedurePathKey,routePortionType,routeName,endpointRole,endpointOccurrenceKey,endpointRawPoint,endpointPointKey,endpointResolveStatus,occurrenceCount,servedAirportCount,runwayEndAssociationCount,sourceTable,sourceRowIds
+PROCEDURE:STAR:SETER.SETER5,STAR,PROC_PATH:PROCEDURE:STAR:SETER.SETER5:BODY:SETER-SB:1:,BODY,SETER-SB,operational_end,PROC_OCC:PROC_PATH:PROCEDURE:STAR:SETER.SETER5:BODY:SETER-SB:1::10,SB,,unresolved,2,7,2,STAR_RTE,13883|13884

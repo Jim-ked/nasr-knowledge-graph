@@ -1,0 +1,14 @@
+metric,value
+totalRows,17799
+oppositeAnyFieldRows,17466
+oppositeBothFieldRows,785
+oppositeCourseOnlyRows,16681
+oppositeAltitudeOnlyRows,0
+noOppositeFieldRows,333
+gapFlagActiveRows,187
+signalGapFlagActiveRows,87
+anyGapActiveRows,274
+doglegActiveRows,3950
+oppositeFieldsWithGapRows,108
+noOppositeFieldsWithGapRows,166
+noOppositeFieldsNoGapRows,167
