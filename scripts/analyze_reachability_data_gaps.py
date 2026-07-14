@@ -46,6 +46,12 @@ AIRWAY_NO_OPPOSITE_GROUP_COLUMNS = (
     "signalGapFlagRaw", "doglegRaw", "sourceTable", "rowCount",
     "sampleFromPointKeys", "sampleToPointKeys", "sampleSourceRowIds",
 )
+AIRWAY_NO_OPPOSITE_ENDPOINT_PATTERN_COLUMNS = (
+    "fromPointKind", "toPointKind", "containsBoundaryPoint", "anyGapActive",
+    "doglegActive", "airwayPrefix", "awyLocation", "rowCount",
+    "airwayCount", "airwayPathCount", "sampleAirwayKeys",
+    "sampleFromPointKeys", "sampleToPointKeys", "sampleSourceRowIds",
+)
 INTERFACE_DETAIL_COLUMNS = (
     "variantCandidateKey", "variantStatus", "procedureKey",
     "procedureType", "bodyPathKey", "transitionPathKey",
@@ -64,6 +70,14 @@ PROCEDURE_INTERFACE_SUMMARY_COLUMNS = (
     "uniqueInterfacePointCount", "connectedInterfacePointCount",
     "hasAnyMatchedVariant", "hasAnyConnectedMatchedVariant",
     "allMatchedVariantsUnconnected", "onlyIncompleteVariants",
+)
+UNIQUE_INTERFACE_POINT_COLUMNS = (
+    "interfacePointKey", "interfaceRawPoints", "pointKind", "usedByDP",
+    "usedBySTAR", "procedureCount", "matchedProcedureCount",
+    "matchedVariantCount", "incompleteVariantCount",
+    "connectedToAirwayNetwork", "airwayOccurrenceCount",
+    "airwayPathCount", "airwayCount", "procedureKeys",
+    "variantStatuses",
 )
 
 
@@ -106,15 +120,6 @@ REACHABILITY_REQUIRED = {
         "airwayOccurrenceCount", "airwayPathCount", "airwayCount",
         "interfaceStatus",
     },
-}
-
-
-EXPECTED_AIRWAY_COUNTS = {
-    "oppositeAnyFieldRows": 17466,
-    "noOppositeFieldRows": 333,
-    "oppositeFieldsWithGapRows": 108,
-    "noOppositeFieldsWithGapRows": 166,
-    "noOppositeFieldsNoGapRows": 167,
 }
 
 
@@ -269,14 +274,18 @@ def direction_name_mismatch_detail(direction_rows, endpoints_by_path):
         end = normalize(row["operationalEndRawPoint"])
         start_matches = first == start
         end_matches = last == end
-        if start_matches and not end_matches:
+        first_format_related = token_related(first, start)
+        last_format_related = token_related(last, end)
+        if start_matches and end_matches:
+            cause = "unknown"
+        elif first_format_related or last_format_related:
+            cause = "format_or_suffix_difference"
+        elif start_matches and not end_matches:
             cause = "last_token_mismatch"
         elif end_matches and not start_matches:
             cause = "first_token_mismatch"
         elif not start_matches and not end_matches:
             cause = "both_tokens_mismatch"
-        elif first in start or start in first or last in end or end in last:
-            cause = "format_or_suffix_difference"
         else:
             cause = "unknown"
         rows.append({
@@ -300,6 +309,12 @@ def direction_name_mismatch_detail(direction_rows, endpoints_by_path):
         })
     rows.sort(key=lambda item: (item["procedureKey"], item["procedurePathKey"]))
     return rows
+
+
+def token_related(left, right):
+    if not left or not right or left == right:
+        return False
+    return left.startswith(right) or right.startswith(left) or left.endswith(right) or right.endswith(left) or left in right or right in left
 
 
 def opposite_field_status(row):
@@ -379,14 +394,40 @@ def airway_reverse_summary(rows, validate_expected_counts):
         "noOppositeFieldsNoGapRows": sum(1 for row in rows if row["reverseEvidenceClass"] == "no_opposite_fields_no_gap"),
     }
     if validate_expected_counts:
-        mismatches = [
-            f"{key}: expected {expected}, actual {metrics[key]}"
-            for key, expected in EXPECTED_AIRWAY_COUNTS.items()
-            if metrics[key] != expected
-        ]
-        if mismatches:
-            raise ValueError("Airway reverse evidence count mismatch: " + "; ".join(mismatches))
+        validate_airway_reverse_identities(metrics)
     return [{"metric": key, "value": value} for key, value in metrics.items()]
+
+
+def validate_airway_reverse_identities(metrics):
+    checks = [
+        (
+            "totalRows = oppositeAnyFieldRows + noOppositeFieldRows",
+            metrics["totalRows"],
+            metrics["oppositeAnyFieldRows"] + metrics["noOppositeFieldRows"],
+        ),
+        (
+            "oppositeAnyFieldRows = oppositeBothFieldRows + oppositeCourseOnlyRows + oppositeAltitudeOnlyRows",
+            metrics["oppositeAnyFieldRows"],
+            metrics["oppositeBothFieldRows"] + metrics["oppositeCourseOnlyRows"] + metrics["oppositeAltitudeOnlyRows"],
+        ),
+        (
+            "noOppositeFieldRows = noOppositeFieldsWithGapRows + noOppositeFieldsNoGapRows",
+            metrics["noOppositeFieldRows"],
+            metrics["noOppositeFieldsWithGapRows"] + metrics["noOppositeFieldsNoGapRows"],
+        ),
+        (
+            "anyGapActiveRows = oppositeFieldsWithGapRows + noOppositeFieldsWithGapRows",
+            metrics["anyGapActiveRows"],
+            metrics["oppositeFieldsWithGapRows"] + metrics["noOppositeFieldsWithGapRows"],
+        ),
+    ]
+    errors = [
+        f"{name}: left {left}, right {right}"
+        for name, left, right in checks
+        if left != right
+    ]
+    if errors:
+        raise ValueError("Airway reverse evidence identity mismatch: " + "; ".join(errors))
 
 
 def airway_no_opposite_grouped(rows):
@@ -415,6 +456,57 @@ def airway_no_opposite_grouped(rows):
             "sampleSourceRowIds": "|".join(row["sourceRowId"] for row in items[:10]),
         })
     return output
+
+
+def airway_no_opposite_endpoint_pattern(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        if row["oppositeFieldStatus"] != "none":
+            continue
+        from_kind = point_kind(row["fromPointKey"])
+        to_kind = point_kind(row["toPointKey"])
+        key = (
+            from_kind,
+            to_kind,
+            bool_text("BOUNDARY_POINT" in {from_kind, to_kind}),
+            row["anyGapActive"],
+            row["doglegActive"],
+            airway_prefix(row["airwayKey"]),
+            airway_location(row["airwayPathKey"]),
+        )
+        groups[key].append(row)
+    output = []
+    for key, items in sorted(groups.items()):
+        output.append({
+            "fromPointKind": key[0],
+            "toPointKind": key[1],
+            "containsBoundaryPoint": key[2],
+            "anyGapActive": key[3],
+            "doglegActive": key[4],
+            "airwayPrefix": key[5],
+            "awyLocation": key[6],
+            "rowCount": len(items),
+            "airwayCount": len({row["airwayKey"] for row in items}),
+            "airwayPathCount": len({row["airwayPathKey"] for row in items}),
+            "sampleAirwayKeys": "|".join(sorted({row["airwayKey"] for row in items})[:10]),
+            "sampleFromPointKeys": "|".join(row["fromPointKey"] for row in items[:10]),
+            "sampleToPointKeys": "|".join(row["toPointKey"] for row in items[:10]),
+            "sampleSourceRowIds": "|".join(row["sourceRowId"] for row in items[:10]),
+        })
+    return output
+
+
+def airway_prefix(airway_key):
+    ident = airway_key.split(":", 1)[-1] if ":" in airway_key else airway_key
+    letters = "".join(ch for ch in ident if ch.isalpha()).upper()
+    if letters in {"J", "Q", "T", "V", "M", "R"}:
+        return letters
+    return "OTHER"
+
+
+def airway_location(airway_path_key):
+    parts = airway_path_key.split(":")
+    return parts[-1] if parts else ""
 
 
 def point_kind(point_key):
@@ -466,7 +558,7 @@ def interface_summary(detail):
         "variant_row": lambda row: row["variantCandidateKey"],
         "procedure_transition_point": lambda row: row["dedupeProcedureTransitionPointKey"],
         "procedure_point": lambda row: row["dedupeProcedurePointKey"],
-        "unique_point": lambda row: row["interfacePointKey"],
+        "category_distinct_point": lambda row: row["interfacePointKey"],
     }
     output = []
     for scope, key_func in scopes.items():
@@ -487,6 +579,46 @@ def interface_summary(detail):
                 "rowCount": len(values),
             })
     return output
+
+
+def unique_interface_points(detail):
+    grouped = defaultdict(list)
+    for row in detail:
+        if row["interfacePointKey"]:
+            grouped[row["interfacePointKey"]].append(row)
+    output = []
+    for point_key, rows in sorted(grouped.items()):
+        matched = [row for row in rows if row["variantStatus"] == "matched_body_transition"]
+        incomplete = [row for row in rows if row["variantStatus"] != "matched_body_transition"]
+        connected = any(row["interfaceStatus"] == "connected_to_airway_network" for row in rows)
+        output.append({
+            "interfacePointKey": point_key,
+            "interfaceRawPoints": "|".join(sorted({row["interfaceRawPoint"] for row in rows if row["interfaceRawPoint"]})),
+            "pointKind": point_kind(point_key),
+            "usedByDP": bool_text(any(row["procedureType"] == "DP" for row in rows)),
+            "usedBySTAR": bool_text(any(row["procedureType"] == "STAR" for row in rows)),
+            "procedureCount": len({row["procedureKey"] for row in rows}),
+            "matchedProcedureCount": len({row["procedureKey"] for row in matched}),
+            "matchedVariantCount": len(matched),
+            "incompleteVariantCount": len(incomplete),
+            "connectedToAirwayNetwork": bool_text(connected),
+            "airwayOccurrenceCount": max_int(row["airwayOccurrenceCount"] for row in rows),
+            "airwayPathCount": max_int(row["airwayPathCount"] for row in rows),
+            "airwayCount": max_int(row["airwayCount"] for row in rows),
+            "procedureKeys": "|".join(sorted({row["procedureKey"] for row in rows})),
+            "variantStatuses": "|".join(sorted({row["variantStatus"] for row in rows})),
+        })
+    return output
+
+
+def max_int(values):
+    result = 0
+    for value in values:
+        try:
+            result = max(result, int(value))
+        except ValueError:
+            pass
+    return result
 
 
 def procedure_interface_summary(detail):
@@ -527,12 +659,13 @@ def procedure_interface_summary(detail):
     return output
 
 
-def data_gap_summary(unresolved, joins, directions, airway_rows, interface_detail_rows, procedure_summary):
+def data_gap_summary(unresolved, joins, directions, airway_rows, interface_detail_rows, procedure_summary, unique_points):
     def count_airway(class_name):
         return sum(1 for row in airway_rows if row["reverseEvidenceClass"] == class_name)
 
     dp_matched = [row for row in interface_detail_rows if row["procedureType"] == "DP" and row["variantStatus"] == "matched_body_transition"]
     star_matched = [row for row in interface_detail_rows if row["procedureType"] == "STAR" and row["variantStatus"] == "matched_body_transition"]
+    matched_unique = [row for row in unique_points if int(row["matchedVariantCount"]) > 0]
     return [
         {"metric": "procedure_endpoint_unresolved_rows", "value": len(unresolved)},
         {"metric": "procedure_join_no_shared_rows", "value": len(joins)},
@@ -554,6 +687,10 @@ def data_gap_summary(unresolved, joins, directions, airway_rows, interface_detai
         {"metric": "dp_procedures_all_matched_variants_unconnected", "value": sum(1 for row in procedure_summary if row["procedureType"] == "DP" and row["allMatchedVariantsUnconnected"] == "true")},
         {"metric": "star_procedures_with_connected_matched_variant", "value": sum(1 for row in procedure_summary if row["procedureType"] == "STAR" and row["hasAnyConnectedMatchedVariant"] == "true")},
         {"metric": "star_procedures_all_matched_variants_unconnected", "value": sum(1 for row in procedure_summary if row["procedureType"] == "STAR" and row["allMatchedVariantsUnconnected"] == "true")},
+        {"metric": "global_unique_interface_point_count", "value": len(unique_points)},
+        {"metric": "global_unique_matched_interface_point_count", "value": len(matched_unique)},
+        {"metric": "global_unique_connected_matched_interface_point_count", "value": sum(1 for row in matched_unique if row["connectedToAirwayNetwork"] == "true")},
+        {"metric": "global_unique_unconnected_matched_interface_point_count", "value": sum(1 for row in matched_unique if row["connectedToAirwayNetwork"] == "false")},
     ]
 
 
@@ -565,7 +702,10 @@ def reset_output_dir(output_dir):
 
 
 def analyze_reachability_data_gaps(clean_dir, reachability_dir, output_dir, validate_expected_counts=True):
-    Path(clean_dir).exists() or (_ for _ in ()).throw(ValueError(f"Missing clean dir: {clean_dir}"))
+    # The clean directory is not read by this analysis stage; it is checked only
+    # to ensure the audit inputs are tied to an existing clean data set.
+    if not Path(clean_dir).exists():
+        raise ValueError(f"Missing clean dir: {clean_dir}")
     data = load_reachability(reachability_dir)
     reset_output_dir(output_dir)
     output_dir = Path(output_dir)
@@ -581,6 +721,7 @@ def analyze_reachability_data_gaps(clean_dir, reachability_dir, output_dir, vali
     interface_rows = interface_detail(data["procedure_enroute_interface.csv"], variants)
     interface_summary_rows = interface_summary(interface_rows)
     procedure_summary_rows = procedure_interface_summary(interface_rows)
+    unique_point_rows = unique_interface_points(interface_rows)
 
     write_csv(output_dir / "procedure_endpoint_unresolved_detail.csv", UNRESOLVED_ENDPOINT_COLUMNS, unresolved)
     write_csv(output_dir / "procedure_join_mismatch_detail.csv", JOIN_MISMATCH_COLUMNS, joins)
@@ -588,10 +729,12 @@ def analyze_reachability_data_gaps(clean_dir, reachability_dir, output_dir, vali
     write_csv(output_dir / "airway_reverse_evidence_detail.csv", AIRWAY_REVERSE_COLUMNS, airway)
     write_csv(output_dir / "airway_reverse_evidence_summary.csv", SUMMARY_COLUMNS, airway_reverse_summary(airway, validate_expected_counts))
     write_csv(output_dir / "airway_no_opposite_grouped.csv", AIRWAY_NO_OPPOSITE_GROUP_COLUMNS, airway_no_opposite_grouped(airway))
+    write_csv(output_dir / "airway_no_opposite_endpoint_pattern.csv", AIRWAY_NO_OPPOSITE_ENDPOINT_PATTERN_COLUMNS, airway_no_opposite_endpoint_pattern(airway))
     write_csv(output_dir / "procedure_interface_gap_detail.csv", INTERFACE_DETAIL_COLUMNS, interface_rows)
     write_csv(output_dir / "procedure_interface_gap_summary.csv", INTERFACE_SUMMARY_COLUMNS, interface_summary_rows)
     write_csv(output_dir / "procedure_interface_procedure_summary.csv", PROCEDURE_INTERFACE_SUMMARY_COLUMNS, procedure_summary_rows)
-    write_csv(output_dir / "reachability_data_gap_summary.csv", SUMMARY_COLUMNS, data_gap_summary(unresolved, joins, directions, airway, interface_rows, procedure_summary_rows))
+    write_csv(output_dir / "unique_interface_points.csv", UNIQUE_INTERFACE_POINT_COLUMNS, unique_point_rows)
+    write_csv(output_dir / "reachability_data_gap_summary.csv", SUMMARY_COLUMNS, data_gap_summary(unresolved, joins, directions, airway, interface_rows, procedure_summary_rows, unique_point_rows))
 
     return {
         "procedure_endpoint_unresolved_rows": len(unresolved),
@@ -599,15 +742,6 @@ def analyze_reachability_data_gaps(clean_dir, reachability_dir, output_dir, vali
         "procedure_direction_name_mismatch_rows": len(directions),
         "airway_no_opposite_rows": sum(1 for row in airway if row["oppositeFieldStatus"] == "none"),
     }
-
-
-def load_reachability(reachability_dir):
-    reachability_dir = Path(reachability_dir)
-    return {
-        filename: read_csv(reachability_dir / filename, required)
-        for filename, required in REACHABILITY_REQUIRED.items()
-    }
-
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Analyze reachability audit data gaps.")

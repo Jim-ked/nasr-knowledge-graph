@@ -5,6 +5,7 @@ from pathlib import Path
 
 from scripts.analyze_reachability_data_gaps import (
     analyze_reachability_data_gaps,
+    airway_reverse_summary,
     flag_active,
 )
 
@@ -117,8 +118,9 @@ class ReachabilityDataGapAnalysisTests(unittest.TestCase):
             [
                 self.airway("A1", "P1", "P2", "090", "12000", "", "", "N"),
                 self.airway("A2", "P2", "P3", "090", "", "Y", "", "N"),
-                self.airway("A3", "P3", "P4", "", "", "Y", "", "Y"),
-                self.airway("A4", "P4", "P5", "", "", "", "NO", "FALSE"),
+                self.airway("A3", "POINT:BOUNDARY:B1", "POINT:FIX:F1:K1", "", "", "Y", "", "Y"),
+                self.airway("A4", "POINT:FIX:F2:K1", "POINT:BOUNDARY:B2", "", "", "", "NO", "FALSE"),
+                self.airway("A5", "POINT:NAVAID:N1:VORTAC:US:AA:CITY", "POINT:NAVAID:N2:VORTAC:US:AA:CITY", "", "", "Y", "", "N"),
             ],
         )
         write_csv(
@@ -129,7 +131,7 @@ class ReachabilityDataGapAnalysisTests(unittest.TestCase):
                 self.variant("P_MULTI", "DP", "M_BODY2", "M_TRANS", "POINT:OUT", "matched_body_transition"),
                 self.variant("P_OTHER", "DP", "O_BODY", "O_TRANS", "POINT:Z", "matched_body_transition"),
                 self.variant("P_BODY_ONLY", "DP", "BODY_ONLY", "", "POINT:BO", "body_only_no_transition"),
-                self.variant("P_TRANS_ONLY", "STAR", "", "TRANS_ONLY", "POINT:TO", "transition_only_no_body"),
+                self.variant("P_TRANS_ONLY", "STAR", "", "TRANS_ONLY", "POINT:OUT", "transition_only_no_body"),
             ],
         )
         write_csv(
@@ -140,7 +142,7 @@ class ReachabilityDataGapAnalysisTests(unittest.TestCase):
                 self.interface("P_MULTI", "DP", "M_BODY2", "M_TRANS", "POINT:OUT", "connected_to_airway_network"),
                 self.interface("P_OTHER", "DP", "O_BODY", "O_TRANS", "POINT:OUT", "connected_to_airway_network"),
                 self.interface("P_BODY_ONLY", "DP", "BODY_ONLY", "", "POINT:BO", "not_found_in_airway_network"),
-                self.interface("P_TRANS_ONLY", "STAR", "", "TRANS_ONLY", "POINT:TO", "not_found_in_airway_network"),
+                self.interface("P_TRANS_ONLY", "STAR", "", "TRANS_ONLY", "POINT:OUT", "connected_to_airway_network"),
             ],
         )
         return clean, reachability, output
@@ -255,8 +257,20 @@ class ReachabilityDataGapAnalysisTests(unittest.TestCase):
             self.assertEqual(classes["A2"], "opposite_fields_with_gap")
             self.assertEqual(classes["A3"], "no_opposite_fields_with_gap")
             self.assertEqual(classes["A4"], "no_opposite_fields_no_gap")
+            self.assertEqual(classes["A5"], "no_opposite_fields_with_gap")
             inactive = {value: flag_active(value) for value in ["", "N", "NO", "0", "FALSE"]}
             self.assertTrue(all(value is False for value in inactive.values()))
+
+            patterns = {
+                (
+                    row["fromPointKind"], row["toPointKind"],
+                    row["anyGapActive"], row["doglegActive"],
+                )
+                for row in read_csv(output / "airway_no_opposite_endpoint_pattern.csv")
+            }
+            self.assertIn(("BOUNDARY_POINT", "FIX", "true", "true"), patterns)
+            self.assertIn(("FIX", "BOUNDARY_POINT", "false", "false"), patterns)
+            self.assertIn(("NAVAID", "NAVAID", "true", "false"), patterns)
 
             detail = read_csv(output / "procedure_interface_gap_detail.csv")
             complete = [row for row in detail if row["isCompleteMatchedVariant"] == "true"]
@@ -284,15 +298,65 @@ class ReachabilityDataGapAnalysisTests(unittest.TestCase):
                 "2",
             )
             self.assertEqual(
-                rows_by_scope[("unique_point", "DP", "matched_body_transition", "connected_to_airway_network")]["rowCount"],
+                rows_by_scope[("category_distinct_point", "DP", "matched_body_transition", "connected_to_airway_network")]["rowCount"],
                 "1",
             )
+
+            unique_points = {
+                row["interfacePointKey"]: row
+                for row in read_csv(output / "unique_interface_points.csv")
+            }
+            self.assertEqual(unique_points["POINT:OUT"]["usedByDP"], "true")
+            self.assertEqual(unique_points["POINT:OUT"]["usedBySTAR"], "true")
+            self.assertIn("matched_body_transition", unique_points["POINT:OUT"]["variantStatuses"])
+            self.assertIn("transition_only_no_body", unique_points["POINT:OUT"]["variantStatuses"])
 
             procedure_summary = read_csv(output / "procedure_interface_procedure_summary.csv")
             by_proc = {row["procedureKey"]: row for row in procedure_summary}
             self.assertEqual(by_proc["P_MULTI"]["matchedVariantCount"], "2")
             self.assertEqual(by_proc["P_MULTI"]["connectedMatchedVariantCount"], "2")
             self.assertEqual(by_proc["P_BODY_ONLY"]["onlyIncompleteVariants"], "true")
+
+    def test_airway_reverse_summary_validates_internal_identities_only(self):
+        rows = [
+            {"oppositeFieldStatus": "both_present", "gapFlagActive": "false", "signalGapFlagActive": "false", "anyGapActive": "false", "doglegActive": "false", "reverseEvidenceClass": "opposite_fields_no_gap"},
+            {"oppositeFieldStatus": "course_only", "gapFlagActive": "true", "signalGapFlagActive": "false", "anyGapActive": "true", "doglegActive": "false", "reverseEvidenceClass": "opposite_fields_with_gap"},
+            {"oppositeFieldStatus": "opposite_alt_only", "gapFlagActive": "false", "signalGapFlagActive": "false", "anyGapActive": "false", "doglegActive": "false", "reverseEvidenceClass": "opposite_fields_no_gap"},
+            {"oppositeFieldStatus": "none", "gapFlagActive": "false", "signalGapFlagActive": "true", "anyGapActive": "true", "doglegActive": "false", "reverseEvidenceClass": "no_opposite_fields_with_gap"},
+            {"oppositeFieldStatus": "none", "gapFlagActive": "false", "signalGapFlagActive": "false", "anyGapActive": "false", "doglegActive": "false", "reverseEvidenceClass": "no_opposite_fields_no_gap"},
+        ]
+        summary = {
+            row["metric"]: row["value"]
+            for row in airway_reverse_summary(rows, validate_expected_counts=True)
+        }
+        self.assertEqual(summary["totalRows"], 5)
+        self.assertEqual(summary["oppositeAnyFieldRows"], 3)
+
+        broken = [dict(row) for row in rows]
+        broken[-1]["reverseEvidenceClass"] = "opposite_fields_with_gap"
+        with self.assertRaisesRegex(ValueError, "identity mismatch"):
+            airway_reverse_summary(broken, validate_expected_counts=True)
+
+    def test_format_or_suffix_difference_is_reachable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            clean, reachability, output = self.make_fixture(Path(temp))
+            direction_path = reachability / "procedure_direction_name_audit.csv"
+            rows = read_csv(direction_path)
+            rows.append(
+                self.direction(
+                    "P_FORMAT", "DP", "P_NORMAL_BODY", "A_SUFFIX-B",
+                    "A_SUFFIX", "B", "A", "B",
+                )
+            )
+            write_csv(direction_path, DIRECTION_COLUMNS, rows)
+
+            analyze_reachability_data_gaps(clean, reachability, output, validate_expected_counts=False)
+
+            details = {
+                row["procedureKey"]: row["possibleCause"]
+                for row in read_csv(output / "procedure_direction_name_mismatch_detail.csv")
+            }
+            self.assertEqual(details["P_FORMAT"], "format_or_suffix_difference")
 
     def test_outputs_and_source_do_not_contain_forbidden_edge_names(self):
         with tempfile.TemporaryDirectory() as temp:
