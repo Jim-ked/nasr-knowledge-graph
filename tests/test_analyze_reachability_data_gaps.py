@@ -7,6 +7,7 @@ from scripts.analyze_reachability_data_gaps import (
     analyze_reachability_data_gaps,
     airway_reverse_summary,
     flag_active,
+    unique_interface_points,
 )
 
 
@@ -357,6 +358,92 @@ class ReachabilityDataGapAnalysisTests(unittest.TestCase):
                 for row in read_csv(output / "procedure_direction_name_mismatch_detail.csv")
             }
             self.assertEqual(details["P_FORMAT"], "format_or_suffix_difference")
+
+    def test_unique_interface_connectivity_uses_airway_counts(self):
+        rows = [
+            {
+                "variantCandidateKey": "P_BODY|BODY|",
+                "variantStatus": "body_only_no_transition",
+                "procedureKey": "P_BODY",
+                "procedureType": "DP",
+                "interfacePointKey": "POINT:FIX:BODY:K1",
+                "interfaceRawPoint": "BODY",
+                "interfaceStatus": "provisional_body_end",
+                "airwayOccurrenceCount": "2",
+                "airwayPathCount": "1",
+                "airwayCount": "1",
+            },
+            {
+                "variantCandidateKey": "P_BODY_ZERO|BODY|",
+                "variantStatus": "body_only_no_transition",
+                "procedureKey": "P_BODY_ZERO",
+                "procedureType": "DP",
+                "interfacePointKey": "POINT:FIX:ZERO:K1",
+                "interfaceRawPoint": "ZERO",
+                "interfaceStatus": "provisional_body_end",
+                "airwayOccurrenceCount": "0",
+                "airwayPathCount": "0",
+                "airwayCount": "0",
+            },
+        ]
+
+        points = {
+            row["interfacePointKey"]: row
+            for row in unique_interface_points(rows)
+        }
+
+        self.assertEqual(points["POINT:FIX:BODY:K1"]["connectedToAirwayNetwork"], "true")
+        self.assertEqual(points["POINT:FIX:ZERO:K1"]["connectedToAirwayNetwork"], "false")
+
+    def test_unique_interface_points_rejects_conflicting_counts(self):
+        rows = [
+            {
+                "variantCandidateKey": "P1|B|T",
+                "variantStatus": "matched_body_transition",
+                "procedureKey": "P1",
+                "procedureType": "DP",
+                "interfacePointKey": "POINT:FIX:SAME:K1",
+                "interfaceRawPoint": "SAME",
+                "interfaceStatus": "connected_to_airway_network",
+                "airwayOccurrenceCount": "1",
+                "airwayPathCount": "1",
+                "airwayCount": "1",
+            },
+            {
+                "variantCandidateKey": "P2|B|T",
+                "variantStatus": "matched_body_transition",
+                "procedureKey": "P2",
+                "procedureType": "STAR",
+                "interfacePointKey": "POINT:FIX:SAME:K1",
+                "interfaceRawPoint": "SAME",
+                "interfaceStatus": "connected_to_airway_network",
+                "airwayOccurrenceCount": "2",
+                "airwayPathCount": "1",
+                "airwayCount": "1",
+            },
+        ]
+
+        with self.assertRaisesRegex(ValueError, "Conflicting airwayOccurrenceCount"):
+            unique_interface_points(rows)
+
+    def test_unique_interface_points_rejects_non_numeric_counts(self):
+        rows = [
+            {
+                "variantCandidateKey": "P1|B|T",
+                "variantStatus": "matched_body_transition",
+                "procedureKey": "P1",
+                "procedureType": "DP",
+                "interfacePointKey": "POINT:FIX:BAD:K1",
+                "interfaceRawPoint": "BAD",
+                "interfaceStatus": "connected_to_airway_network",
+                "airwayOccurrenceCount": "many",
+                "airwayPathCount": "1",
+                "airwayCount": "1",
+            },
+        ]
+
+        with self.assertRaisesRegex(ValueError, "Non-integer airwayOccurrenceCount"):
+            unique_interface_points(rows)
 
     def test_outputs_and_source_do_not_contain_forbidden_edge_names(self):
         with tempfile.TemporaryDirectory() as temp:

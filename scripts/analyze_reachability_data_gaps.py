@@ -590,7 +590,9 @@ def unique_interface_points(detail):
     for point_key, rows in sorted(grouped.items()):
         matched = [row for row in rows if row["variantStatus"] == "matched_body_transition"]
         incomplete = [row for row in rows if row["variantStatus"] != "matched_body_transition"]
-        connected = any(row["interfaceStatus"] == "connected_to_airway_network" for row in rows)
+        occurrence_count = consistent_count(point_key, rows, "airwayOccurrenceCount")
+        path_count = consistent_count(point_key, rows, "airwayPathCount")
+        airway_count = consistent_count(point_key, rows, "airwayCount")
         output.append({
             "interfacePointKey": point_key,
             "interfaceRawPoints": "|".join(sorted({row["interfaceRawPoint"] for row in rows if row["interfaceRawPoint"]})),
@@ -601,24 +603,36 @@ def unique_interface_points(detail):
             "matchedProcedureCount": len({row["procedureKey"] for row in matched}),
             "matchedVariantCount": len(matched),
             "incompleteVariantCount": len(incomplete),
-            "connectedToAirwayNetwork": bool_text(connected),
-            "airwayOccurrenceCount": max_int(row["airwayOccurrenceCount"] for row in rows),
-            "airwayPathCount": max_int(row["airwayPathCount"] for row in rows),
-            "airwayCount": max_int(row["airwayCount"] for row in rows),
+            "connectedToAirwayNetwork": bool_text(occurrence_count > 0),
+            "airwayOccurrenceCount": occurrence_count,
+            "airwayPathCount": path_count,
+            "airwayCount": airway_count,
             "procedureKeys": "|".join(sorted({row["procedureKey"] for row in rows})),
             "variantStatuses": "|".join(sorted({row["variantStatus"] for row in rows})),
         })
     return output
 
 
-def max_int(values):
-    result = 0
-    for value in values:
+def consistent_count(point_key, rows, field):
+    values = set()
+    for row in rows:
+        raw = row.get(field, "")
+        if raw == "":
+            continue
         try:
-            result = max(result, int(value))
-        except ValueError:
-            pass
-    return result
+            values.add(int(raw))
+        except ValueError as exc:
+            raise ValueError(
+                f"Non-integer {field} for {point_key}: {raw}"
+            ) from exc
+    if not values:
+        return 0
+    if len(values) > 1:
+        raise ValueError(
+            f"Conflicting {field} for {point_key}: "
+            + "|".join(str(value) for value in sorted(values))
+        )
+    return next(iter(values))
 
 
 def procedure_interface_summary(detail):
