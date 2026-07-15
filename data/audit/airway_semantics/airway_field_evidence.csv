@@ -1,0 +1,13 @@
+officialFieldName,csvColumn,officialDefinition,officialSource,pageOrLocation
+POINT_SEQ,POINT_SEQ,Sequencing number in multiples of ten. Points are in order adapted for given Airway.,AWY DATA LAYOUT.pdf,page 2
+SEG_VALUE,FROM_POINT,"NAVAID Facility Identifier, FIX Name or Border crossing.",AWY DATA LAYOUT.pdf,page 2; TXT_to_CSV_Mapping.pdf pages 16-17 maps AWY2 point value to SEG_VALUE
+NEXT_SEG,TO_POINT,The To Point that directly follows the current From Point on an individual segment.,AWY DATA LAYOUT.pdf,page 3; TXT_to_CSV_Mapping.pdf page 16 maps legacy NEXT_SEG
+AIRWAY_STRING,AIRWAY_STRING,List of FIX and NAVAID that make up the AIRWAY in order adapted.,AWY DATA LAYOUT.pdf,page 2
+MAG_COURSE,MAG_COURSE,Segment Magnetic Course.,AWY DATA LAYOUT.pdf,page 3
+OPP_MAG_COURSE,OPP_MAG_COURSE,Segment Magnetic Course - Opposite Direction.,AWY DATA LAYOUT.pdf,page 3
+AWY_SEG_GAP_FLAG,AWY_SEG_GAP_FLAG,Airway Gap Flag Indicator for when Airway Discontinued - Y/N.,AWY DATA LAYOUT.pdf,page 4
+SIGNAL_GAP_FLAG,SIGNAL_GAP_FLAG,Gap in Signal Coverage Indicator for when MEA established with a gap in navigation signal coverage - Y/N.,AWY DATA LAYOUT.pdf,page 4
+DOGLEG,DOGLEG,A Turn Point Not At A NAVAID - Y/N.,AWY DATA LAYOUT.pdf,page 4
+MIN_ENROUTE_ALT,MIN_ENROUTE_ALT,Point To Point Minimum Enroute Altitude (MEA).,AWY DATA LAYOUT.pdf,page 4
+MIN_ENROUTE_ALT_OPPOSITE,MIN_ENROUTE_ALT_OPPOSITE,Point To Point Minimum Enroute Altitude (MEA-Opposite Direction).,AWY DATA LAYOUT.pdf,page 4
+MEA_GAP,MEA_GAP,Identifies whether a given Airway Segment is Unusable or contains No MEA information.,AWY DATA LAYOUT.pdf,page 5; README.txt 2026-09 format change note
